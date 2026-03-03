@@ -5,9 +5,12 @@ import com.example.demo.tag.model.Tag;
 import com.hankcs.hanlp.HanLP;
 import com.hankcs.hanlp.seg.common.Term;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -15,6 +18,38 @@ import java.util.stream.Collectors;
  * 使用HanLP分词器进行中文分词，功能强大，支持词性过滤
  */
 public class HanLPTagExtractor implements TagExtractor {
+    
+    private static final Set<String> ALLOWED_NATURES = new HashSet<>(Arrays.asList(
+        "n",    // 名词
+        "nr",   // 人名
+        "ns",   // 地名
+        "nt",   // 机构名
+        "nz",   // 其他专名
+        "ng",   // 名词语素
+        "nl",   // 名词性惯用语
+        "ni",   // 机构专名
+        "nm",   // 数词名
+        "v",    // 动词
+        "vg",   // 动词语素
+        "vi",   // 不及物动词
+        "vn",   // 名动词
+        "vd",   // 副动词
+        "a",    // 形容词（保留部分形容词作为标签）
+        "ad",   // 副形词
+        "an",   // 名形词
+        "j",    // 简称
+        "l",    // 习用语
+        "q",    // 量词（保留部分量词）
+        "b"     // 区别词
+    ));
+    
+    private static final Set<String> STOP_WORDS = new HashSet<>(Arrays.asList(
+        "的", "了", "是", "在", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
+        "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好",
+        "自己", "这", "那", "什么", "他", "她", "它", "们", "这个", "那个", "这些", "那些",
+        "可以", "因为", "所以", "但是", "如果", "虽然", "而且", "或者", "还是", "以及",
+        "这样", "那样", "怎样", "如何", "为什么", "哪", "哪里", "哪个", "哪些"
+    ));
     
     /**
      * 从文章内容中提取标签（默认提取10个）
@@ -46,11 +81,13 @@ public class HanLPTagExtractor implements TagExtractor {
             String word = term.word.trim().toLowerCase();
             String nature = term.nature.toString();
             
-            // 过滤太短的词和虚词
-            // u: 助词, c: 连词, p: 介词, d: 副词
-            if (!word.isEmpty() && word.length() >= 2 && 
-                !nature.startsWith("u") && !nature.startsWith("c") && 
-                !nature.startsWith("p") && !nature.startsWith("d")) {
+            // 词性过滤：只保留允许的词性
+            // 停用词过滤：排除常见停用词
+            // 长度过滤：排除过短的词
+            if (!word.isEmpty() && 
+                word.length() >= 2 && 
+                !STOP_WORDS.contains(word) &&
+                isAllowedNature(nature)) {
                 wordCount.put(word, wordCount.getOrDefault(word, 0) + 1);
             }
         }
@@ -81,5 +118,28 @@ public class HanLPTagExtractor implements TagExtractor {
     @Override
     public String getName() {
         return "HanLPTagExtractor";
+    }
+    
+    /**
+     * 判断词性是否允许作为标签
+     * @param nature 词性标注
+     * @return true表示允许，false表示不允许
+     */
+    private boolean isAllowedNature(String nature) {
+        if (nature == null || nature.isEmpty()) {
+            return false;
+        }
+        
+        // 精确匹配允许的词性
+        if (ALLOWED_NATURES.contains(nature)) {
+            return true;
+        }
+        
+        // 对于以n开头的词性（名词类），大部分都允许
+        if (nature.startsWith("n") && !nature.equals("nrfg") && !nature.equals("nrt")) {
+            return true;
+        }
+        
+        return false;
     }
 }
