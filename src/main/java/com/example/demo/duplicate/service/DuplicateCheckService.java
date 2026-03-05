@@ -7,7 +7,6 @@ import com.example.demo.duplicate.detector.DuplicateDetector;
 import com.example.demo.duplicate.model.Article;
 import com.example.demo.duplicate.model.DuplicateCheckReport;
 import com.example.demo.duplicate.model.SimilarityResult;
-import com.example.demo.duplicate.repository.ArticleRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +25,8 @@ import java.util.stream.Collectors;
  * 核心服务类，协调检测器和算法完成重复检测任务。
  * 提供单篇检测、批量检测和报告生成功能。
  * 
+ * 注意：文章数据由调用者直接传入，本服务不负责获取文章。
+ * 
  * @author ty9907
  * @version 1.0
  * @since 2026-03-05
@@ -34,7 +35,6 @@ public class DuplicateCheckService {
 
     private static final Logger logger = LoggerFactory.getLogger(DuplicateCheckService.class);
 
-    private ArticleRepository repository;
     private SimilarityCalculator calculator;
     private DuplicateDetector detector;
     private DuplicateCheckConfig config;
@@ -62,33 +62,17 @@ public class DuplicateCheckService {
     }
 
     /**
-     * 带仓储参数的构造函数
-     * 
-     * @param repository 文章仓储
-     * @param config 检测配置
-     */
-    public DuplicateCheckService(ArticleRepository repository, DuplicateCheckConfig config) {
-        this.repository = repository;
-        this.config = config != null ? config : DuplicateCheckConfig.defaultConfig();
-        this.calculator = SimilarityCalculatorFactory.getCalculator(this.config.getAlgorithmType());
-        logger.info("DuplicateCheckService 初始化完成，配置: {}, 仓储: {}", this.config, repository);
-    }
-
-    /**
      * 完整参数的构造函数
      * 
-     * @param repository 文章仓储
      * @param calculator 相似度计算器
      * @param detector 重复检测器
      * @param config 检测配置
      * @param cacheService 缓存服务（可选）
      */
-    public DuplicateCheckService(ArticleRepository repository, 
-                                  SimilarityCalculator calculator,
+    public DuplicateCheckService(SimilarityCalculator calculator,
                                   DuplicateDetector detector,
                                   DuplicateCheckConfig config,
                                   SimilarityCacheService cacheService) {
-        this.repository = repository;
         this.calculator = calculator != null ? calculator : SimilarityCalculatorFactory.getCalculator();
         this.detector = detector;
         this.config = config != null ? config : DuplicateCheckConfig.defaultConfig();
@@ -101,10 +85,11 @@ public class DuplicateCheckService {
      * 使用默认配置检测文章是否重复
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @return 检测报告
      */
-    public DuplicateCheckReport checkDuplicate(Article article) {
-        return checkDuplicate(article, this.config);
+    public DuplicateCheckReport checkDuplicate(Article article, List<Article> existingArticles) {
+        return checkDuplicate(article, existingArticles, this.config);
     }
 
     /**
@@ -112,10 +97,11 @@ public class DuplicateCheckService {
      * 使用指定配置检测文章是否重复
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 检测报告
      */
-    public DuplicateCheckReport checkDuplicate(Article article, DuplicateCheckConfig config) {
+    public DuplicateCheckReport checkDuplicate(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
         if (article == null) {
             logger.warn("检测文章为空，返回空报告");
             return createEmptyReport(null);
@@ -129,7 +115,7 @@ public class DuplicateCheckService {
         long startTime = System.currentTimeMillis();
 
         try {
-            List<SimilarityResult> results = findSimilarArticles(article, config);
+            List<SimilarityResult> results = findSimilarArticles(article, existingArticles, config);
             DuplicateCheckReport report = generateReport(article, results);
 
             long elapsed = System.currentTimeMillis() - startTime;
@@ -148,9 +134,23 @@ public class DuplicateCheckService {
      * 检测多篇文章是否重复
      * 
      * @param articles 待检测的文章列表
+     * @param existingArticles 已有的文章列表（用于比较）
      * @return 检测报告列表
      */
-    public List<DuplicateCheckReport> batchCheck(List<Article> articles) {
+    public List<DuplicateCheckReport> batchCheck(List<Article> articles, List<Article> existingArticles) {
+        return batchCheck(articles, existingArticles, this.config);
+    }
+
+    /**
+     * 批量检测（带配置）
+     * 检测多篇文章是否重复
+     * 
+     * @param articles 待检测的文章列表
+     * @param existingArticles 已有的文章列表（用于比较）
+     * @param config 检测配置
+     * @return 检测报告列表
+     */
+    public List<DuplicateCheckReport> batchCheck(List<Article> articles, List<Article> existingArticles, DuplicateCheckConfig config) {
         if (articles == null || articles.isEmpty()) {
             logger.warn("检测文章列表为空，返回空列表");
             return new ArrayList<>();
@@ -159,10 +159,12 @@ public class DuplicateCheckService {
         logger.info("开始批量检测文章重复，文章数量: {}", articles.size());
         long startTime = System.currentTimeMillis();
 
+        DuplicateCheckConfig useConfig = config != null ? config : this.config;
+
         List<DuplicateCheckReport> reports = articles.stream()
                 .map(article -> {
                     try {
-                        return checkDuplicate(article);
+                        return checkDuplicate(article, existingArticles, useConfig);
                     } catch (Exception e) {
                         logger.error("批量检测时发生错误，文章ID: {}", 
                                 article != null ? article.getId() : null, e);
@@ -260,16 +262,6 @@ public class DuplicateCheckService {
     }
 
     /**
-     * 设置文章仓储
-     * 
-     * @param repository 文章仓储
-     */
-    public void setRepository(ArticleRepository repository) {
-        this.repository = repository;
-        logger.info("设置文章仓储: {}", repository != null ? repository.getClass().getSimpleName() : "null");
-    }
-
-    /**
      * 设置缓存服务
      * 
      * @param cacheService 缓存服务
@@ -283,29 +275,24 @@ public class DuplicateCheckService {
      * 查找相似文章
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 相似度结果列表
      */
-    private List<SimilarityResult> findSimilarArticles(Article article, DuplicateCheckConfig config) {
-        if (repository == null) {
-            logger.warn("文章仓储未设置，无法查找相似文章");
+    private List<SimilarityResult> findSimilarArticles(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
+        if (existingArticles == null || existingArticles.isEmpty()) {
+            logger.debug("未提供已有文章列表，返回空列表");
             return new ArrayList<>();
         }
 
-        List<Article> recentArticles = repository.findRecentArticles(config.getRecentDays());
-        if (recentArticles == null || recentArticles.isEmpty()) {
-            logger.debug("未找到近期文章，返回空列表");
-            return new ArrayList<>();
-        }
-
-        List<Article> articlesToCompare = recentArticles.stream()
+        List<Article> articlesToCompare = existingArticles.stream()
                 .filter(a -> a != null && !a.getId().equals(article.getId()))
                 .collect(Collectors.toList());
 
         logger.debug("找到 {} 篇待比较文章", articlesToCompare.size());
 
         if (detector != null) {
-            return detector.findSimilarArticles(article, config);
+            return detector.findSimilarArticles(article, articlesToCompare, config);
         }
 
         return calculateSimilarities(article, articlesToCompare, config);
@@ -448,15 +435,6 @@ public class DuplicateCheckService {
      */
     public DuplicateDetector getDetector() {
         return detector;
-    }
-
-    /**
-     * 获取当前文章仓储
-     * 
-     * @return 文章仓储
-     */
-    public ArticleRepository getRepository() {
-        return repository;
     }
 
     /**

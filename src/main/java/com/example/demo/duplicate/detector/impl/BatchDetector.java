@@ -6,7 +6,6 @@ import com.example.demo.duplicate.detector.DuplicateDetector;
 import com.example.demo.duplicate.model.Article;
 import com.example.demo.duplicate.model.DuplicateCheckReport;
 import com.example.demo.duplicate.model.SimilarityResult;
-import com.example.demo.duplicate.repository.ArticleRepository;
 import com.example.demo.duplicate.service.SimilarityCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,7 +48,6 @@ public class BatchDetector implements DuplicateDetector {
     private static final int MAX_PARALLEL_THREADS = Runtime.getRuntime().availableProcessors();
 
     private final SimilarityCalculator similarityCalculator;
-    private final ArticleRepository articleRepository;
     private final SimilarityCacheService cacheService;
     private final int batchSize;
 
@@ -61,29 +59,24 @@ public class BatchDetector implements DuplicateDetector {
      * 构造器（使用默认批量大小）
      * 
      * @param similarityCalculator 相似度计算器
-     * @param articleRepository 文章仓储
      * @param cacheService 缓存服务
      */
     public BatchDetector(SimilarityCalculator similarityCalculator,
-                        ArticleRepository articleRepository,
                         SimilarityCacheService cacheService) {
-        this(similarityCalculator, articleRepository, cacheService, DEFAULT_BATCH_SIZE);
+        this(similarityCalculator, cacheService, DEFAULT_BATCH_SIZE);
     }
 
     /**
      * 构造器（指定批量大小）
      * 
      * @param similarityCalculator 相似度计算器
-     * @param articleRepository 文章仓储
      * @param cacheService 缓存服务
      * @param batchSize 批量大小
      */
     public BatchDetector(SimilarityCalculator similarityCalculator,
-                        ArticleRepository articleRepository,
                         SimilarityCacheService cacheService,
                         int batchSize) {
         this.similarityCalculator = Objects.requireNonNull(similarityCalculator, "相似度计算器不能为空");
-        this.articleRepository = Objects.requireNonNull(articleRepository, "文章仓储不能为空");
         this.cacheService = cacheService;
         this.batchSize = batchSize > 0 ? batchSize : DEFAULT_BATCH_SIZE;
         this.forkJoinPool = new ForkJoinPool(MAX_PARALLEL_THREADS);
@@ -93,20 +86,30 @@ public class BatchDetector implements DuplicateDetector {
     }
 
     /**
+     * 简化构造器（无缓存）
+     * 
+     * @param similarityCalculator 相似度计算器
+     */
+    public BatchDetector(SimilarityCalculator similarityCalculator) {
+        this(similarityCalculator, null, DEFAULT_BATCH_SIZE);
+    }
+
+    /**
      * 检测单篇文章是否重复
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 检测报告
      */
     @Override
-    public DuplicateCheckReport detect(Article article, DuplicateCheckConfig config) {
+    public DuplicateCheckReport detect(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
         logger.debug("批量检测器处理单篇文章，文章ID：{}", article.getId());
         
         List<Article> singleArticleList = new ArrayList<>();
         singleArticleList.add(article);
         
-        List<DuplicateCheckReport> reports = batchDetect(singleArticleList, config);
+        List<DuplicateCheckReport> reports = batchDetect(singleArticleList, existingArticles, config);
         
         return reports.isEmpty() ? createEmptyReport(article) : reports.get(0);
     }
@@ -115,11 +118,12 @@ public class BatchDetector implements DuplicateDetector {
      * 批量检测文章是否重复
      * 
      * @param articles 待检测的文章列表
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 检测报告列表
      */
     @Override
-    public List<DuplicateCheckReport> batchDetect(List<Article> articles, DuplicateCheckConfig config) {
+    public List<DuplicateCheckReport> batchDetect(List<Article> articles, List<Article> existingArticles, DuplicateCheckConfig config) {
         long startTime = System.currentTimeMillis();
         
         DuplicateCheckConfig effectiveConfig = config != null ? config : DuplicateCheckConfig.defaultConfig();
@@ -137,7 +141,7 @@ public class BatchDetector implements DuplicateDetector {
             int currentBatch = i / batchSize + 1;
             logger.info("处理第{}/{}批次，文章数量：{}", currentBatch, totalBatches, batch.size());
             
-            List<DuplicateCheckReport> batchReports = processBatch(batch, effectiveConfig);
+            List<DuplicateCheckReport> batchReports = processBatch(batch, existingArticles, effectiveConfig);
             allReports.addAll(batchReports);
         }
         
@@ -156,20 +160,21 @@ public class BatchDetector implements DuplicateDetector {
      * 查找与指定文章相似的文章
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 相似度结果列表
      */
     @Override
-    public List<SimilarityResult> findSimilarArticles(Article article, DuplicateCheckConfig config) {
+    public List<SimilarityResult> findSimilarArticles(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
         DuplicateCheckConfig effectiveConfig = config != null ? config : DuplicateCheckConfig.defaultConfig();
         
-        List<Article> recentArticles = getRecentArticles(article, effectiveConfig);
+        List<Article> articlesToCompare = filterCurrentArticle(article, existingArticles);
         
-        if (recentArticles.isEmpty()) {
+        if (articlesToCompare.isEmpty()) {
             return new ArrayList<>();
         }
         
-        List<SimilarityResult> results = calculateSimilaritiesParallel(article, recentArticles, effectiveConfig);
+        List<SimilarityResult> results = calculateSimilaritiesParallel(article, articlesToCompare, effectiveConfig);
         
         results.sort(Comparator.comparingDouble(SimilarityResult::getSimilarity).reversed());
         
@@ -191,7 +196,10 @@ public class BatchDetector implements DuplicateDetector {
      */
     @Override
     public boolean isDuplicate(Article article1, Article article2, double threshold) {
-        double similarity = calculateSimilarity(article1, article2, DuplicateCheckConfig.defaultConfig());
+        if (article1 == null || article2 == null) {
+            return false;
+        }
+        double similarity = similarityCalculator.calculateSimilarity(article1, article2);
         boolean isDuplicate = similarity >= threshold;
         
         logger.debug("判断两篇文章是否重复，文章ID1：{}，文章ID2：{}，相似度：{}，阈值：{}，结果：{}", 
@@ -215,23 +223,24 @@ public class BatchDetector implements DuplicateDetector {
      * 使用并行流提升处理性能
      * 
      * @param batch 文章批次
+     * @param existingArticles 已有文章列表
      * @param config 检测配置
      * @return 检测报告列表
      */
-    public List<DuplicateCheckReport> processBatch(List<Article> batch, DuplicateCheckConfig config) {
+    public List<DuplicateCheckReport> processBatch(List<Article> batch, List<Article> existingArticles, DuplicateCheckConfig config) {
         long batchStartTime = System.currentTimeMillis();
         
         logger.debug("开始处理批次，文章数量：{}", batch.size());
         
-        List<Article> recentArticles = articleRepository.findRecentArticles(config.getRecentDays());
-        logger.debug("获取到{}篇近期文章用于比较", recentArticles.size());
+        List<Article> articlesToCompare = existingArticles != null ? existingArticles : new ArrayList<>();
+        logger.debug("获取到{}篇文章用于比较", articlesToCompare.size());
         
         List<DuplicateCheckReport> reports;
         
         try {
             reports = forkJoinPool.submit(() -> 
                 batch.parallelStream()
-                    .map(article -> detectArticle(article, recentArticles, config))
+                    .map(article -> detectArticle(article, articlesToCompare, config))
                     .collect(Collectors.toList())
             ).get();
         } catch (Exception e) {
@@ -251,16 +260,16 @@ public class BatchDetector implements DuplicateDetector {
      * 检测单篇文章（线程安全）
      * 
      * @param article 待检测文章
-     * @param recentArticles 近期文章列表
+     * @param existingArticles 已有文章列表
      * @param config 检测配置
      * @return 检测报告
      */
-    private DuplicateCheckReport detectArticle(Article article, List<Article> recentArticles, DuplicateCheckConfig config) {
+    private DuplicateCheckReport detectArticle(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
         ReentrantLock lock = articleLocks.computeIfAbsent(article.getId(), k -> new ReentrantLock());
         
         lock.lock();
         try {
-            return doDetectArticle(article, recentArticles, config);
+            return doDetectArticle(article, existingArticles, config);
         } finally {
             lock.unlock();
             articleLocks.remove(article.getId());
@@ -271,23 +280,21 @@ public class BatchDetector implements DuplicateDetector {
      * 执行单篇文章检测
      * 
      * @param article 待检测文章
-     * @param recentArticles 近期文章列表
+     * @param existingArticles 已有文章列表
      * @param config 检测配置
      * @return 检测报告
      */
-    private DuplicateCheckReport doDetectArticle(Article article, List<Article> recentArticles, DuplicateCheckConfig config) {
+    private DuplicateCheckReport doDetectArticle(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
         DuplicateCheckReport report = new DuplicateCheckReport();
         report.setArticleId(article.getId());
         report.setCheckTime(LocalDateTime.now());
         
         try {
-            List<Article> filteredArticles = recentArticles.stream()
-                    .filter(a -> !a.getId().equals(article.getId()))
-                    .collect(Collectors.toList());
+            List<Article> filteredArticles = filterCurrentArticle(article, existingArticles);
             
             if (filteredArticles.isEmpty()) {
                 report.setHasDuplicate(false);
-                report.setSummary("无近期文章可比较，检测通过");
+                report.setSummary("无文章可比较，检测通过");
                 return report;
             }
             
@@ -325,18 +332,19 @@ public class BatchDetector implements DuplicateDetector {
     }
 
     /**
-     * 获取近期文章列表
-     * 排除当前正在检测的文章
+     * 过滤掉当前文章
      * 
      * @param currentArticle 当前文章
-     * @param config 检测配置
-     * @return 近期文章列表
+     * @param articles 文章列表
+     * @return 过滤后的文章列表
      */
-    private List<Article> getRecentArticles(Article currentArticle, DuplicateCheckConfig config) {
-        List<Article> recentArticles = articleRepository.findRecentArticles(config.getRecentDays());
+    private List<Article> filterCurrentArticle(Article currentArticle, List<Article> articles) {
+        if (articles == null || articles.isEmpty()) {
+            return new ArrayList<>();
+        }
         
         List<Article> filteredArticles = new ArrayList<>();
-        for (Article article : recentArticles) {
+        for (Article article : articles) {
             if (!article.getId().equals(currentArticle.getId())) {
                 filteredArticles.add(article);
             }
@@ -349,14 +357,14 @@ public class BatchDetector implements DuplicateDetector {
      * 并行计算文章相似度
      * 
      * @param article 待检测文章
-     * @param recentArticles 近期文章列表
+     * @param existingArticles 已有文章列表
      * @param config 检测配置
      * @return 相似度结果列表
      */
-    private List<SimilarityResult> calculateSimilaritiesParallel(Article article, List<Article> recentArticles, 
+    private List<SimilarityResult> calculateSimilaritiesParallel(Article article, List<Article> existingArticles, 
                                                                   DuplicateCheckConfig config) {
-        return recentArticles.parallelStream()
-                .map(recentArticle -> calculateSimilarityResult(article, recentArticle, config))
+        return existingArticles.parallelStream()
+                .map(existingArticle -> calculateSimilarityResult(article, existingArticle, config))
                 .collect(Collectors.toList());
     }
 

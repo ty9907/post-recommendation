@@ -20,31 +20,34 @@ import java.util.List;
 public interface DuplicateDetector {
 
     /**
-     * 检测单篇文章是否重复
+     * 检测单篇文章是否与已有文章重复
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 检测报告
      */
-    DuplicateCheckReport detect(Article article, DuplicateCheckConfig config);
+    DuplicateCheckReport detect(Article article, List<Article> existingArticles, DuplicateCheckConfig config);
 
     /**
      * 批量检测文章是否重复
      * 
      * @param articles 待检测的文章列表
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 检测报告列表
      */
-    List<DuplicateCheckReport> batchDetect(List<Article> articles, DuplicateCheckConfig config);
+    List<DuplicateCheckReport> batchDetect(List<Article> articles, List<Article> existingArticles, DuplicateCheckConfig config);
 
     /**
      * 查找与指定文章相似的文章
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 相似度结果列表
      */
-    List<SimilarityResult> findSimilarArticles(Article article, DuplicateCheckConfig config);
+    List<SimilarityResult> findSimilarArticles(Article article, List<Article> existingArticles, DuplicateCheckConfig config);
 
     /**
      * 判断两篇文章是否重复

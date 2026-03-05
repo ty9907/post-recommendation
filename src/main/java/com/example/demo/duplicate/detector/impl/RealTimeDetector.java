@@ -6,7 +6,6 @@ import com.example.demo.duplicate.detector.DuplicateDetector;
 import com.example.demo.duplicate.model.Article;
 import com.example.demo.duplicate.model.DuplicateCheckReport;
 import com.example.demo.duplicate.model.SimilarityResult;
-import com.example.demo.duplicate.repository.ArticleRepository;
 import com.example.demo.duplicate.service.SimilarityCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +24,7 @@ import java.util.Objects;
  * 
  * 特点：
  * 1. 快速响应：优先使用缓存，减少重复计算
- * 2. 低延迟：只检测近期文章，控制检测范围
+ * 2. 低延迟：只检测传入的文章列表，控制检测范围
  * 3. 线程安全：支持并发调用
  * 
  * @author ty9907
@@ -39,7 +38,6 @@ public class RealTimeDetector implements DuplicateDetector {
     private static final String DETECTOR_NAME = "RealTimeDetector";
 
     private final SimilarityCalculator similarityCalculator;
-    private final ArticleRepository articleRepository;
     private final DuplicateCheckConfig config;
     private final SimilarityCacheService cacheService;
 
@@ -47,16 +45,13 @@ public class RealTimeDetector implements DuplicateDetector {
      * 构造器
      * 
      * @param similarityCalculator 相似度计算器
-     * @param articleRepository 文章仓储
      * @param config 检测配置
      * @param cacheService 缓存服务
      */
     public RealTimeDetector(SimilarityCalculator similarityCalculator,
-                           ArticleRepository articleRepository,
                            DuplicateCheckConfig config,
                            SimilarityCacheService cacheService) {
         this.similarityCalculator = Objects.requireNonNull(similarityCalculator, "相似度计算器不能为空");
-        this.articleRepository = Objects.requireNonNull(articleRepository, "文章仓储不能为空");
         this.config = config != null ? config : DuplicateCheckConfig.defaultConfig();
         this.cacheService = cacheService;
         
@@ -65,14 +60,34 @@ public class RealTimeDetector implements DuplicateDetector {
     }
 
     /**
+     * 简化构造器（无缓存）
+     * 
+     * @param similarityCalculator 相似度计算器
+     * @param config 检测配置
+     */
+    public RealTimeDetector(SimilarityCalculator similarityCalculator, DuplicateCheckConfig config) {
+        this(similarityCalculator, config, null);
+    }
+
+    /**
+     * 简化构造器（使用默认配置）
+     * 
+     * @param similarityCalculator 相似度计算器
+     */
+    public RealTimeDetector(SimilarityCalculator similarityCalculator) {
+        this(similarityCalculator, null, null);
+    }
+
+    /**
      * 检测文章是否与已有文章重复
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 检测报告
      */
     @Override
-    public DuplicateCheckReport detect(Article article, DuplicateCheckConfig config) {
+    public DuplicateCheckReport detect(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
         long startTime = System.currentTimeMillis();
         DuplicateCheckConfig useConfig = config != null ? config : this.config;
         
@@ -84,18 +99,18 @@ public class RealTimeDetector implements DuplicateDetector {
         report.setCheckTime(LocalDateTime.now());
         
         try {
-            List<Article> recentArticles = getRecentArticles(article, useConfig);
+            List<Article> articlesToCompare = filterCurrentArticle(article, existingArticles);
             
-            logger.debug("获取到{}篇近期文章用于比较", recentArticles.size());
+            logger.debug("获取到{}篇文章用于比较", articlesToCompare.size());
             
-            if (recentArticles.isEmpty()) {
+            if (articlesToCompare.isEmpty()) {
                 report.setHasDuplicate(false);
-                report.setSummary("无近期文章可比较，检测通过");
-                logger.info("无近期文章可比较，文章ID：{} 检测通过", article.getId());
+                report.setSummary("无文章可比较，检测通过");
+                logger.info("无文章可比较，文章ID：{} 检测通过", article.getId());
                 return report;
             }
             
-            List<SimilarityResult> results = calculateSimilarities(article, recentArticles, useConfig);
+            List<SimilarityResult> results = calculateSimilarities(article, articlesToCompare, useConfig);
             
             results.sort(Comparator.comparingDouble(SimilarityResult::getSimilarity).reversed());
             
@@ -116,7 +131,7 @@ public class RealTimeDetector implements DuplicateDetector {
             
             long elapsed = System.currentTimeMillis() - startTime;
             logger.info("实时检测完成，文章ID：{}，是否存在重复：{}，耗时：{}ms，比较文章数：{}", 
-                    article.getId(), hasDuplicate, elapsed, recentArticles.size());
+                    article.getId(), hasDuplicate, elapsed, articlesToCompare.size());
             
             if (hasDuplicate) {
                 logger.warn("检测到重复文章，文章ID：{}，最高相似度：{}", 
@@ -137,11 +152,12 @@ public class RealTimeDetector implements DuplicateDetector {
      * 实时检测器逐篇处理，保证低延迟
      * 
      * @param articles 待检测的文章列表
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 检测报告列表
      */
     @Override
-    public List<DuplicateCheckReport> batchDetect(List<Article> articles, DuplicateCheckConfig config) {
+    public List<DuplicateCheckReport> batchDetect(List<Article> articles, List<Article> existingArticles, DuplicateCheckConfig config) {
         long startTime = System.currentTimeMillis();
         DuplicateCheckConfig useConfig = config != null ? config : this.config;
         
@@ -150,7 +166,7 @@ public class RealTimeDetector implements DuplicateDetector {
         List<DuplicateCheckReport> reports = new ArrayList<>();
         
         for (Article article : articles) {
-            DuplicateCheckReport report = detect(article, useConfig);
+            DuplicateCheckReport report = detect(article, existingArticles, useConfig);
             reports.add(report);
         }
         
@@ -164,20 +180,21 @@ public class RealTimeDetector implements DuplicateDetector {
      * 查找与指定文章相似的文章
      * 
      * @param article 待检测的文章
+     * @param existingArticles 已有的文章列表（用于比较）
      * @param config 检测配置
      * @return 相似度结果列表
      */
     @Override
-    public List<SimilarityResult> findSimilarArticles(Article article, DuplicateCheckConfig config) {
+    public List<SimilarityResult> findSimilarArticles(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
         DuplicateCheckConfig useConfig = config != null ? config : this.config;
         
-        List<Article> recentArticles = getRecentArticles(article, useConfig);
+        List<Article> articlesToCompare = filterCurrentArticle(article, existingArticles);
         
-        if (recentArticles.isEmpty()) {
+        if (articlesToCompare.isEmpty()) {
             return new ArrayList<>();
         }
         
-        List<SimilarityResult> results = calculateSimilarities(article, recentArticles, useConfig);
+        List<SimilarityResult> results = calculateSimilarities(article, articlesToCompare, useConfig);
         
         results.sort(Comparator.comparingDouble(SimilarityResult::getSimilarity).reversed());
         
@@ -222,18 +239,19 @@ public class RealTimeDetector implements DuplicateDetector {
     }
 
     /**
-     * 获取近期文章列表
-     * 排除当前正在检测的文章
+     * 过滤掉当前文章
      * 
      * @param currentArticle 当前文章
-     * @param config 检测配置
-     * @return 近期文章列表
+     * @param articles 文章列表
+     * @return 过滤后的文章列表
      */
-    private List<Article> getRecentArticles(Article currentArticle, DuplicateCheckConfig config) {
-        List<Article> recentArticles = articleRepository.findRecentArticles(config.getRecentDays());
+    private List<Article> filterCurrentArticle(Article currentArticle, List<Article> articles) {
+        if (articles == null || articles.isEmpty()) {
+            return new ArrayList<>();
+        }
         
         List<Article> filteredArticles = new ArrayList<>();
-        for (Article article : recentArticles) {
+        for (Article article : articles) {
             if (!article.getId().equals(currentArticle.getId())) {
                 filteredArticles.add(article);
             }
@@ -243,24 +261,24 @@ public class RealTimeDetector implements DuplicateDetector {
     }
 
     /**
-     * 计算文章与近期文章的相似度
+     * 计算文章与已有文章的相似度
      * 优先使用缓存
      * 
      * @param article 待检测文章
-     * @param recentArticles 近期文章列表
+     * @param existingArticles 已有文章列表
      * @param config 检测配置
      * @return 相似度结果列表
      */
-    private List<SimilarityResult> calculateSimilarities(Article article, List<Article> recentArticles, 
+    private List<SimilarityResult> calculateSimilarities(Article article, List<Article> existingArticles, 
                                                          DuplicateCheckConfig config) {
         List<SimilarityResult> results = new ArrayList<>();
         
-        for (Article recentArticle : recentArticles) {
-            double similarity = calculateSimilarityWithCache(article, recentArticle, config);
+        for (Article existingArticle : existingArticles) {
+            double similarity = calculateSimilarityWithCache(article, existingArticle, config);
             
             SimilarityResult result = new SimilarityResult();
             result.setArticleId(article.getId());
-            result.setComparedArticleId(recentArticle.getId());
+            result.setComparedArticleId(existingArticle.getId());
             result.setSimilarity(similarity);
             result.setAlgorithm(similarityCalculator.getName());
             result.setCheckTime(LocalDateTime.now());

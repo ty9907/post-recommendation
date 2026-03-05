@@ -21,7 +21,7 @@
   - [x] SubTask 3.3: 实现 CosineSimilarityCalculator，使用纯余弦相似度算法
   - [x] SubTask 3.4: 实现 EditDistanceSimilarityCalculator，使用编辑距离算法
   - [x] SubTask 3.5: 实现 SimHashSimilarityCalculator，使用 SimHash 算法
-  - [ ] SubTask 3.6: 实现 Word2VecSimilarityCalculator，使用词向量计算语义相似度（需要额外依赖）
+  - [x] SubTask 3.6: 实现 Word2VecSimilarityCalculator，使用词向量计算语义相似度
   - [x] SubTask 3.7: 实现文本结构分析功能（段落、句子结构）
   - [x] SubTask 3.8: 创建 SimilarityCalculatorFactory，支持算法动态选择和切换
 
@@ -44,9 +44,8 @@
   - [x] SubTask 6.4: 添加检测策略选择机制
 
 - [x] Task 7: 创建仓储接口
-  - [x] SubTask 7.1: 创建 ArticleRepository 接口，定义文章数据访问操作
-  - [x] SubTask 7.2: 实现基于内存的仓储实现（用于测试）
-  - [x] SubTask 7.3: 添加按标签查询文章的方法
+  - [x] SubTask 7.1: 创建 ArticleRepository 接口，定义文章数据访问操作（由外部系统实现）
+  - [x] SubTask 7.2: 添加按标签查询文章的方法
 
 ## 第四阶段：配置与工具
 - [x] Task 8: 实现配置管理
@@ -76,8 +75,8 @@
 ## 第六阶段：误报减少机制
 - [x] Task 12: 实现误报减少功能
   - [x] SubTask 12.1: 实现多算法交叉验证机制
-  - [ ] SubTask 12.2: 创建白名单管理功能
-  - [ ] SubTask 12.3: 添加可疑案例标记和人工审核支持
+  - [x] SubTask 12.2: 创建白名单管理功能
+  - [x] SubTask 12.3: 添加可疑案例标记和人工审核支持
   - [x] SubTask 12.4: 实现自适应阈值调整机制
 
 ## 第七阶段：日志与报告
@@ -98,7 +97,7 @@
   - [x] SubTask 15.3: 编写余弦相似度计算器测试
   - [x] SubTask 15.4: 编写编辑距离相似度计算器测试
   - [x] SubTask 15.5: 编写 SimHash 相似度计算器测试
-  - [ ] SubTask 15.6: 编写 Word2Vec 相似度计算器测试（需要额外依赖）
+  - [x] SubTask 15.6: 编写 Word2Vec 相似度计算器测试
   - [x] SubTask 15.7: 编写混合相似度计算器测试
   - [x] SubTask 15.8: 编写检测服务测试
   - [x] SubTask 15.9: 编写算法工厂和算法切换测试

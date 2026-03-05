@@ -6,7 +6,6 @@ import com.example.demo.duplicate.detector.DuplicateDetector;
 import com.example.demo.duplicate.model.Article;
 import com.example.demo.duplicate.model.DuplicateCheckReport;
 import com.example.demo.duplicate.model.SimilarityResult;
-import com.example.demo.duplicate.repository.ArticleRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,9 +44,6 @@ import static org.mockito.Mockito.*;
 class DuplicateCheckServiceTest {
 
     @Mock
-    private ArticleRepository repository;
-
-    @Mock
     private SimilarityCalculator calculator;
 
     @Mock
@@ -59,6 +55,7 @@ class DuplicateCheckServiceTest {
     private DuplicateCheckConfig config;
     private Article testArticle;
     private Article similarArticle;
+    private List<Article> existingArticles;
 
     @BeforeEach
     void setUp() {
@@ -71,17 +68,17 @@ class DuplicateCheckServiceTest {
         
         similarArticle = new Article(2L, "相似文章标题", "这是一篇相似文章的内容，用于验证重复检测功能。");
         similarArticle.setCreateTime(LocalDateTime.now());
+        
+        existingArticles = Arrays.asList(similarArticle);
     }
 
     @Test
     @DisplayName("测试单篇检测 - 正常情况")
     void testCheckDuplicate_Normal() {
-        List<Article> recentArticles = Arrays.asList(similarArticle);
-        when(repository.findRecentArticles(anyInt())).thenReturn(recentArticles);
         when(calculator.calculateSimilarity(any(Article.class), any(Article.class))).thenReturn(0.85);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, null, config, cacheService);
-        DuplicateCheckReport report = service.checkDuplicate(testArticle);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, null, config, cacheService);
+        DuplicateCheckReport report = service.checkDuplicate(testArticle, existingArticles);
         
         assertNotNull(report, "检测报告不应为空");
         assertEquals(1L, report.getArticleId(), "文章ID应匹配");
@@ -92,8 +89,8 @@ class DuplicateCheckServiceTest {
     @Test
     @DisplayName("测试单篇检测 - 文章为空")
     void testCheckDuplicate_NullArticle() {
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
-        DuplicateCheckReport report = service.checkDuplicate(null);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
+        DuplicateCheckReport report = service.checkDuplicate(null, existingArticles);
         
         assertNotNull(report, "检测报告不应为空");
         assertNull(report.getArticleId(), "文章ID应为空");
@@ -104,10 +101,8 @@ class DuplicateCheckServiceTest {
     @Test
     @DisplayName("测试单篇检测 - 无相似文章")
     void testCheckDuplicate_NoSimilarArticles() {
-        when(repository.findRecentArticles(anyInt())).thenReturn(Collections.emptyList());
-        
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, null, config, cacheService);
-        DuplicateCheckReport report = service.checkDuplicate(testArticle);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, null, config, cacheService);
+        DuplicateCheckReport report = service.checkDuplicate(testArticle, Collections.emptyList());
         
         assertNotNull(report, "检测报告不应为空");
         assertFalse(report.isHasDuplicate(), "不应标记为重复");
@@ -117,13 +112,11 @@ class DuplicateCheckServiceTest {
     @Test
     @DisplayName("测试单篇检测 - 存在重复文章")
     void testCheckDuplicate_HasDuplicate() {
-        List<Article> recentArticles = Arrays.asList(similarArticle);
-        when(repository.findRecentArticles(anyInt())).thenReturn(recentArticles);
         when(cacheService.getSimilarity(anyLong(), anyLong())).thenReturn(null);
         when(calculator.calculateSimilarity(any(Article.class), any(Article.class))).thenReturn(0.85);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, null, config, cacheService);
-        DuplicateCheckReport report = service.checkDuplicate(testArticle);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, null, config, cacheService);
+        DuplicateCheckReport report = service.checkDuplicate(testArticle, existingArticles);
         
         assertNotNull(report, "检测报告不应为空");
         assertTrue(report.isHasDuplicate(), "应标记为重复");
@@ -137,12 +130,10 @@ class DuplicateCheckServiceTest {
             0.8, 60, "COSINE", 5, true, 0.6
         );
         
-        List<Article> recentArticles = Arrays.asList(similarArticle);
-        when(repository.findRecentArticles(anyInt())).thenReturn(recentArticles);
         when(calculator.calculateSimilarity(any(Article.class), any(Article.class))).thenReturn(0.75);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, null, config, cacheService);
-        DuplicateCheckReport report = service.checkDuplicate(testArticle, customConfig);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, null, config, cacheService);
+        DuplicateCheckReport report = service.checkDuplicate(testArticle, existingArticles, customConfig);
         
         assertNotNull(report, "检测报告不应为空");
         assertEquals(1L, report.getArticleId(), "文章ID应匹配");
@@ -156,11 +147,10 @@ class DuplicateCheckServiceTest {
         Article article3 = new Article(3L, "文章3", "内容3");
         List<Article> articles = Arrays.asList(article1, article2, article3);
         
-        when(repository.findRecentArticles(anyInt())).thenReturn(Arrays.asList(similarArticle));
         when(calculator.calculateSimilarity(any(Article.class), any(Article.class))).thenReturn(0.5);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, null, config, cacheService);
-        List<DuplicateCheckReport> reports = service.batchCheck(articles);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, null, config, cacheService);
+        List<DuplicateCheckReport> reports = service.batchCheck(articles, existingArticles);
         
         assertNotNull(reports, "报告列表不应为空");
         assertEquals(3, reports.size(), "应返回3份报告");
@@ -174,8 +164,8 @@ class DuplicateCheckServiceTest {
     @Test
     @DisplayName("测试批量检测 - 空列表")
     void testBatchCheck_EmptyList() {
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
-        List<DuplicateCheckReport> reports = service.batchCheck(Collections.emptyList());
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
+        List<DuplicateCheckReport> reports = service.batchCheck(Collections.emptyList(), existingArticles);
         
         assertNotNull(reports, "报告列表不应为空");
         assertTrue(reports.isEmpty(), "报告列表应为空");
@@ -184,8 +174,8 @@ class DuplicateCheckServiceTest {
     @Test
     @DisplayName("测试批量检测 - 空参数")
     void testBatchCheck_Null() {
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
-        List<DuplicateCheckReport> reports = service.batchCheck(null);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
+        List<DuplicateCheckReport> reports = service.batchCheck(null, existingArticles);
         
         assertNotNull(reports, "报告列表不应为空");
         assertTrue(reports.isEmpty(), "报告列表应为空");
@@ -210,7 +200,7 @@ class DuplicateCheckServiceTest {
         
         List<SimilarityResult> results = Arrays.asList(result1, result2);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         DuplicateCheckReport report = service.generateReport(testArticle, results);
         
         assertNotNull(report, "报告不应为空");
@@ -223,7 +213,7 @@ class DuplicateCheckServiceTest {
     @Test
     @DisplayName("测试报告生成 - 空结果")
     void testGenerateReport_EmptyResults() {
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         DuplicateCheckReport report = service.generateReport(testArticle, Collections.emptyList());
         
         assertNotNull(report, "报告不应为空");
@@ -235,7 +225,7 @@ class DuplicateCheckServiceTest {
     @Test
     @DisplayName("测试报告生成 - 文章为空")
     void testGenerateReport_NullArticle() {
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         DuplicateCheckReport report = service.generateReport(null, new ArrayList<>());
         
         assertNotNull(report, "报告不应为空");
@@ -263,7 +253,7 @@ class DuplicateCheckServiceTest {
         
         List<SimilarityResult> results = Arrays.asList(result1, result2, result3);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         DuplicateCheckReport report = service.generateReport(testArticle, results);
         
         assertEquals(3, report.getResults().size(), "应有3个结果");
@@ -279,7 +269,7 @@ class DuplicateCheckServiceTest {
             0.6, 45, "SimHash", 15, false, 0.7
         );
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         service.setConfig(newConfig);
         
         assertEquals(newConfig, service.getConfig(), "配置应更新");
@@ -288,7 +278,7 @@ class DuplicateCheckServiceTest {
     @Test
     @DisplayName("测试配置更新 - 设置空配置使用默认值")
     void testSetConfig_Null() {
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         service.setConfig(null);
         
         assertNotNull(service.getConfig(), "配置不应为空");
@@ -302,7 +292,7 @@ class DuplicateCheckServiceTest {
         DuplicateDetector newDetector = mock(DuplicateDetector.class);
         when(newDetector.getName()).thenReturn("TestDetector");
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         service.setDetector(newDetector);
         
         assertEquals(newDetector, service.getDetector(), "检测器应更新");
@@ -314,21 +304,10 @@ class DuplicateCheckServiceTest {
         SimilarityCalculator newCalculator = mock(SimilarityCalculator.class);
         when(newCalculator.getName()).thenReturn("TestCalculator");
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         service.setCalculator(newCalculator);
         
         assertEquals(newCalculator, service.getCalculator(), "计算器应更新");
-    }
-
-    @Test
-    @DisplayName("测试设置文章仓储")
-    void testSetRepository() {
-        ArticleRepository newRepository = mock(ArticleRepository.class);
-        
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
-        service.setRepository(newRepository);
-        
-        assertEquals(newRepository, service.getRepository(), "仓储应更新");
     }
 
     @Test
@@ -336,7 +315,7 @@ class DuplicateCheckServiceTest {
     void testSetCacheService() {
         SimilarityCacheService newCacheService = mock(SimilarityCacheService.class);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
         service.setCacheService(newCacheService);
         
         assertEquals(newCacheService, service.getCacheService(), "缓存服务应更新");
@@ -354,27 +333,24 @@ class DuplicateCheckServiceTest {
         result.setCheckTime(LocalDateTime.now());
         mockResults.add(result);
         
-        when(repository.findRecentArticles(anyInt())).thenReturn(Arrays.asList(similarArticle));
-        when(detector.findSimilarArticles(any(Article.class), any(DuplicateCheckConfig.class)))
+        when(detector.findSimilarArticles(any(Article.class), anyList(), any(DuplicateCheckConfig.class)))
             .thenReturn(mockResults);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, detector, config, cacheService);
-        DuplicateCheckReport report = service.checkDuplicate(testArticle);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, detector, config, cacheService);
+        DuplicateCheckReport report = service.checkDuplicate(testArticle, existingArticles);
         
         assertNotNull(report, "报告不应为空");
         assertTrue(report.isHasDuplicate(), "应标记为重复");
-        verify(detector, times(1)).findSimilarArticles(any(Article.class), any(DuplicateCheckConfig.class));
+        verify(detector, times(1)).findSimilarArticles(any(Article.class), anyList(), any(DuplicateCheckConfig.class));
     }
 
     @Test
     @DisplayName("测试缓存功能 - 启用缓存")
     void testCheckDuplicate_WithCacheEnabled() {
-        List<Article> recentArticles = Arrays.asList(similarArticle);
-        when(repository.findRecentArticles(anyInt())).thenReturn(recentArticles);
         when(cacheService.getSimilarity(anyLong(), anyLong())).thenReturn(0.75);
         
-        DuplicateCheckService service = new DuplicateCheckService(repository, calculator, null, config, cacheService);
-        DuplicateCheckReport report = service.checkDuplicate(testArticle);
+        DuplicateCheckService service = new DuplicateCheckService(calculator, null, config, cacheService);
+        DuplicateCheckReport report = service.checkDuplicate(testArticle, existingArticles);
         
         assertNotNull(report, "报告不应为空");
         verify(cacheService, atLeastOnce()).getSimilarity(anyLong(), anyLong());
@@ -401,15 +377,5 @@ class DuplicateCheckServiceTest {
         
         assertNotNull(configService, "服务不应为空");
         assertEquals(customConfig, configService.getConfig(), "配置应匹配");
-    }
-
-    @Test
-    @DisplayName("测试带仓储和配置的构造函数")
-    void testConstructorWithRepositoryAndConfig() {
-        DuplicateCheckService repoService = new DuplicateCheckService(repository, config);
-        
-        assertNotNull(repoService, "服务不应为空");
-        assertEquals(repository, repoService.getRepository(), "仓储应匹配");
-        assertEquals(config, repoService.getConfig(), "配置应匹配");
     }
 }

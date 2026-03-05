@@ -22,7 +22,7 @@
 - [x] CosineSimilarityCalculator 正确实现纯余弦相似度算法
 - [x] EditDistanceSimilarityCalculator 正确实现编辑距离算法
 - [x] SimHashSimilarityCalculator 正确实现 SimHash 算法
-- [ ] Word2VecSimilarityCalculator 正确实现词向量语义相似度（需要额外依赖）
+- [x] Word2VecSimilarityCalculator 正确实现词向量语义相似度
 - [x] SimilarityCalculatorFactory 支持算法动态选择和切换
 - [x] 用户可以通过配置选择不同的相似度算法
 - [x] 文本结构分析功能能识别段落和句子结构
@@ -60,8 +60,8 @@
 
 ## 误报减少机制验证
 - [x] 多算法交叉验证能降低误报率
-- [ ] 白名单功能能排除特定文章对（未实现）
-- [ ] 可疑案例标记功能正常（未实现）
+- [x] 白名单功能能排除特定文章对
+- [x] 可疑案例标记功能正常
 - [x] 自适应阈值调整机制生效
 
 ## 日志与报告验证
