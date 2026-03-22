@@ -1,11 +1,18 @@
 package com.example.demo.duplicate.detector.impl;
 
 import com.example.demo.duplicate.algorithm.SimilarityCalculator;
+import com.example.demo.duplicate.candidate.CandidateManager;
+import com.example.demo.duplicate.candidate.CandidateManagerImpl;
+import com.example.demo.duplicate.candidate.CandidateSelection;
 import com.example.demo.duplicate.config.DuplicateCheckConfig;
 import com.example.demo.duplicate.detector.DuplicateDetector;
 import com.example.demo.duplicate.model.Article;
 import com.example.demo.duplicate.model.DuplicateCheckReport;
 import com.example.demo.duplicate.model.SimilarityResult;
+import com.example.demo.duplicate.monitor.PerformanceMetrics;
+import com.example.demo.duplicate.monitor.PerformanceMonitor;
+import com.example.demo.duplicate.risk.RiskAssessor;
+import com.example.demo.duplicate.risk.RiskLevel;
 import com.example.demo.duplicate.service.SimilarityCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
@@ -22,20 +30,9 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 /**
- * 批量检测器
- * 
- * 高吞吐、可并行处理的重复文章检测器。
- * 适用于定时任务和管理员批量操作场景。
- * 
- * 特点：
- * 1. 高吞吐：支持批量检测，减少重复IO操作
- * 2. 并行处理：使用并行流和线程池提升性能
- * 3. 可配置：支持批量大小配置
- * 4. 线程安全：支持并发调用
- * 
- * @author ty9907
- * @version 1.0
- * @since 2026-03-05
+ * 批量检测器。
+ *
+ * 在保留并行处理能力的同时，引入索引加速与候选集筛选。
  */
 public class BatchDetector implements DuplicateDetector {
 
@@ -50,223 +47,153 @@ public class BatchDetector implements DuplicateDetector {
     private final SimilarityCalculator similarityCalculator;
     private final SimilarityCacheService cacheService;
     private final int batchSize;
-
     private final ForkJoinPool forkJoinPool;
-
+    private final CandidateManager candidateManager;
+    private final PerformanceMonitor performanceMonitor;
+    private final RiskAssessor riskAssessor;
     private final ConcurrentHashMap<Long, ReentrantLock> articleLocks = new ConcurrentHashMap<>();
 
-    /**
-     * 构造器（使用默认批量大小）
-     * 
-     * @param similarityCalculator 相似度计算器
-     * @param cacheService 缓存服务
-     */
     public BatchDetector(SimilarityCalculator similarityCalculator,
-                        SimilarityCacheService cacheService) {
-        this(similarityCalculator, cacheService, DEFAULT_BATCH_SIZE);
-    }
-
-    /**
-     * 构造器（指定批量大小）
-     * 
-     * @param similarityCalculator 相似度计算器
-     * @param cacheService 缓存服务
-     * @param batchSize 批量大小
-     */
-    public BatchDetector(SimilarityCalculator similarityCalculator,
-                        SimilarityCacheService cacheService,
-                        int batchSize) {
+                         SimilarityCacheService cacheService,
+                         int batchSize,
+                         CandidateManager candidateManager,
+                         PerformanceMonitor performanceMonitor,
+                         RiskAssessor riskAssessor) {
         this.similarityCalculator = Objects.requireNonNull(similarityCalculator, "相似度计算器不能为空");
         this.cacheService = cacheService;
         this.batchSize = batchSize > 0 ? batchSize : DEFAULT_BATCH_SIZE;
+        this.candidateManager = candidateManager != null ? candidateManager : new CandidateManagerImpl();
+        this.performanceMonitor = performanceMonitor != null ? performanceMonitor : new PerformanceMonitor();
+        this.riskAssessor = riskAssessor != null ? riskAssessor : new RiskAssessor();
         this.forkJoinPool = new ForkJoinPool(MAX_PARALLEL_THREADS);
-        
-        logger.info("批量检测器初始化完成，算法：{}，批量大小：{}，并行线程数：{}", 
+
+        logger.info("批量检测器初始化完成，算法：{}，批量大小：{}，并行线程数：{}",
                 similarityCalculator.getName(), this.batchSize, MAX_PARALLEL_THREADS);
     }
 
-    /**
-     * 简化构造器（无缓存）
-     * 
-     * @param similarityCalculator 相似度计算器
-     */
+    public BatchDetector(SimilarityCalculator similarityCalculator,
+                         SimilarityCacheService cacheService,
+                         int batchSize) {
+        this(similarityCalculator, cacheService, batchSize, new CandidateManagerImpl(), new PerformanceMonitor(), new RiskAssessor());
+    }
+
+    public BatchDetector(SimilarityCalculator similarityCalculator,
+                         SimilarityCacheService cacheService) {
+        this(similarityCalculator, cacheService, DEFAULT_BATCH_SIZE);
+    }
+
     public BatchDetector(SimilarityCalculator similarityCalculator) {
         this(similarityCalculator, null, DEFAULT_BATCH_SIZE);
     }
 
-    /**
-     * 检测单篇文章是否重复
-     * 
-     * @param article 待检测的文章
-     * @param existingArticles 已有的文章列表（用于比较）
-     * @param config 检测配置
-     * @return 检测报告
-     */
     @Override
     public DuplicateCheckReport detect(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
-        logger.debug("批量检测器处理单篇文章，文章ID：{}", article.getId());
-        
+        if (article == null) {
+            DuplicateCheckReport report = new DuplicateCheckReport();
+            report.setArticleId(null);
+            report.setCheckTime(LocalDateTime.now());
+            report.setHasDuplicate(false);
+            report.setSummary("文章为空，跳过检测");
+            return report;
+        }
+
         List<Article> singleArticleList = new ArrayList<>();
         singleArticleList.add(article);
-        
         List<DuplicateCheckReport> reports = batchDetect(singleArticleList, existingArticles, config);
-        
         return reports.isEmpty() ? createEmptyReport(article) : reports.get(0);
     }
 
-    /**
-     * 批量检测文章是否重复
-     * 
-     * @param articles 待检测的文章列表
-     * @param existingArticles 已有的文章列表（用于比较）
-     * @param config 检测配置
-     * @return 检测报告列表
-     */
     @Override
     public List<DuplicateCheckReport> batchDetect(List<Article> articles, List<Article> existingArticles, DuplicateCheckConfig config) {
         long startTime = System.currentTimeMillis();
-        
-        DuplicateCheckConfig effectiveConfig = config != null ? config : DuplicateCheckConfig.defaultConfig();
-        
-        logger.info("开始批量检测，文章数量：{}，阈值：{}", articles.size(), effectiveConfig.getThreshold());
-        
         List<DuplicateCheckReport> allReports = new ArrayList<>();
-        
+
+        if (articles == null || articles.isEmpty()) {
+            return allReports;
+        }
+
+        DuplicateCheckConfig effectiveConfig = config != null ? config : DuplicateCheckConfig.defaultConfig();
+        List<Article> articlesToCompare = existingArticles != null ? existingArticles : new ArrayList<>();
+
+        if (effectiveConfig.isEnableLayeredDetection()) {
+            candidateManager.warmUp(articlesToCompare);
+        }
+
         int totalBatches = (articles.size() + batchSize - 1) / batchSize;
-        
         for (int i = 0; i < articles.size(); i += batchSize) {
             int endIndex = Math.min(i + batchSize, articles.size());
             List<Article> batch = articles.subList(i, endIndex);
-            
+
             int currentBatch = i / batchSize + 1;
             logger.info("处理第{}/{}批次，文章数量：{}", currentBatch, totalBatches, batch.size());
-            
-            List<DuplicateCheckReport> batchReports = processBatch(batch, existingArticles, effectiveConfig);
+
+            List<DuplicateCheckReport> batchReports = processBatch(batch, articlesToCompare, effectiveConfig);
             allReports.addAll(batchReports);
         }
-        
+
         long elapsed = System.currentTimeMillis() - startTime;
         long duplicateCount = allReports.stream()
                 .filter(DuplicateCheckReport::isHasDuplicate)
                 .count();
-        
-        logger.info("批量检测完成，总文章数：{}，重复文章数：{}，耗时：{}ms", 
+
+        logger.info("批量检测完成，总文章数：{}，重复文章数：{}，耗时：{}ms",
                 articles.size(), duplicateCount, elapsed);
-        
+
         return allReports;
     }
 
-    /**
-     * 查找与指定文章相似的文章
-     * 
-     * @param article 待检测的文章
-     * @param existingArticles 已有的文章列表（用于比较）
-     * @param config 检测配置
-     * @return 相似度结果列表
-     */
     @Override
     public List<SimilarityResult> findSimilarArticles(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
         DuplicateCheckConfig effectiveConfig = config != null ? config : DuplicateCheckConfig.defaultConfig();
-        
         List<Article> articlesToCompare = filterCurrentArticle(article, existingArticles);
-        
-        if (articlesToCompare.isEmpty()) {
+
+        if (article == null || articlesToCompare.isEmpty()) {
             return new ArrayList<>();
         }
-        
-        List<SimilarityResult> results = calculateSimilaritiesParallel(article, articlesToCompare, effectiveConfig);
-        
-        results.sort(Comparator.comparingDouble(SimilarityResult::getSimilarity).reversed());
-        
-        int maxResults = effectiveConfig.getMaxResults();
-        if (results.size() > maxResults) {
-            results = results.subList(0, maxResults);
+
+        if (effectiveConfig.isEnableLayeredDetection()) {
+            candidateManager.warmUp(articlesToCompare);
         }
-        
-        return results;
+
+        CandidateSelection selection = buildCandidateSelection(article, articlesToCompare, effectiveConfig);
+        return calculateSimilarities(article, selection.getCandidates(), effectiveConfig);
     }
 
-    /**
-     * 判断两篇文章是否重复
-     * 
-     * @param article1 第一篇文章
-     * @param article2 第二篇文章
-     * @param threshold 相似度阈值
-     * @return true表示重复，false表示不重复
-     */
     @Override
     public boolean isDuplicate(Article article1, Article article2, double threshold) {
         if (article1 == null || article2 == null) {
             return false;
         }
         double similarity = similarityCalculator.calculateSimilarity(article1, article2);
-        boolean isDuplicate = similarity >= threshold;
-        
-        logger.debug("判断两篇文章是否重复，文章ID1：{}，文章ID2：{}，相似度：{}，阈值：{}，结果：{}", 
-                article1.getId(), article2.getId(), similarity, threshold, isDuplicate);
-        
-        return isDuplicate;
+        return similarity >= threshold;
     }
 
-    /**
-     * 获取检测器名称
-     * 
-     * @return 检测器名称
-     */
     @Override
     public String getName() {
         return DETECTOR_NAME;
     }
 
-    /**
-     * 处理单个批次的文章
-     * 使用并行流提升处理性能
-     * 
-     * @param batch 文章批次
-     * @param existingArticles 已有文章列表
-     * @param config 检测配置
-     * @return 检测报告列表
-     */
     public List<DuplicateCheckReport> processBatch(List<Article> batch, List<Article> existingArticles, DuplicateCheckConfig config) {
-        long batchStartTime = System.currentTimeMillis();
-        
-        logger.debug("开始处理批次，文章数量：{}", batch.size());
-        
-        List<Article> articlesToCompare = existingArticles != null ? existingArticles : new ArrayList<>();
-        logger.debug("获取到{}篇文章用于比较", articlesToCompare.size());
-        
-        List<DuplicateCheckReport> reports;
-        
+        if (batch == null || batch.isEmpty()) {
+            return new ArrayList<>();
+        }
+
         try {
-            reports = forkJoinPool.submit(() -> 
-                batch.parallelStream()
-                    .map(article -> detectArticle(article, articlesToCompare, config))
-                    .collect(Collectors.toList())
+            return forkJoinPool.submit(() ->
+                    batch.parallelStream()
+                            .map(article -> detectArticle(article, existingArticles, config))
+                            .collect(Collectors.toList())
             ).get();
         } catch (Exception e) {
             logger.error("并行处理批次时发生异常", e);
-            reports = batch.stream()
+            return batch.stream()
                     .map(article -> createErrorReport(article, e))
                     .collect(Collectors.toList());
         }
-        
-        long elapsed = System.currentTimeMillis() - batchStartTime;
-        logger.debug("批次处理完成，文章数量：{}，耗时：{}ms", batch.size(), elapsed);
-        
-        return reports;
     }
 
-    /**
-     * 检测单篇文章（线程安全）
-     * 
-     * @param article 待检测文章
-     * @param existingArticles 已有文章列表
-     * @param config 检测配置
-     * @return 检测报告
-     */
     private DuplicateCheckReport detectArticle(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
-        ReentrantLock lock = articleLocks.computeIfAbsent(article.getId(), k -> new ReentrantLock());
-        
+        ReentrantLock lock = articleLocks.computeIfAbsent(article.getId(), key -> new ReentrantLock());
         lock.lock();
         try {
             return doDetectArticle(article, existingArticles, config);
@@ -276,210 +203,210 @@ public class BatchDetector implements DuplicateDetector {
         }
     }
 
-    /**
-     * 执行单篇文章检测
-     * 
-     * @param article 待检测文章
-     * @param existingArticles 已有文章列表
-     * @param config 检测配置
-     * @return 检测报告
-     */
     private DuplicateCheckReport doDetectArticle(Article article, List<Article> existingArticles, DuplicateCheckConfig config) {
+        long totalStart = System.currentTimeMillis();
+        PerformanceMetrics performanceMetrics = new PerformanceMetrics();
+
         DuplicateCheckReport report = new DuplicateCheckReport();
         report.setArticleId(article.getId());
         report.setCheckTime(LocalDateTime.now());
-        
+
         try {
             List<Article> filteredArticles = filterCurrentArticle(article, existingArticles);
-            
             if (filteredArticles.isEmpty()) {
                 report.setHasDuplicate(false);
+                report.setRiskLevel(RiskLevel.LOW);
                 report.setSummary("无文章可比较，检测通过");
+                finalizeMetrics(report, performanceMetrics, totalStart);
                 return report;
             }
-            
-            List<SimilarityResult> results = calculateSimilaritiesParallel(article, filteredArticles, config);
-            
-            results.sort(Comparator.comparingDouble(SimilarityResult::getSimilarity).reversed());
-            
-            int maxResults = config.getMaxResults();
-            if (results.size() > maxResults) {
-                results = results.subList(0, maxResults);
+
+            long candidateStart = System.currentTimeMillis();
+            CandidateSelection selection = buildCandidateSelection(article, filteredArticles, config);
+            List<Article> candidates = selection.getCandidates();
+            performanceMetrics.recordStage("candidateSelection", System.currentTimeMillis() - candidateStart);
+            performanceMetrics.recordCount("simHashCandidates", selection.getSimHashCandidateCount());
+            performanceMetrics.recordCount("tagCandidates", selection.getTagCandidateCount());
+            performanceMetrics.recordCount("finalCandidates", candidates.size());
+            report.setLayerDetails(selection.toDiagnostics());
+
+            if (candidates.isEmpty()) {
+                report.setHasDuplicate(false);
+                report.setRiskLevel(RiskLevel.LOW);
+                report.setSummary("候选集为空，检测通过");
+                finalizeMetrics(report, performanceMetrics, totalStart);
+                return report;
             }
-            
-            for (SimilarityResult result : results) {
-                report.addResult(result);
-            }
-            
-            boolean hasDuplicate = results.stream()
-                    .anyMatch(r -> r.getSimilarity() >= config.getThreshold());
-            
+
+            long preciseStart = System.currentTimeMillis();
+            List<SimilarityResult> results = calculateSimilarities(article, candidates, config);
+            performanceMetrics.recordStage("preciseCalculation", System.currentTimeMillis() - preciseStart);
+
+            boolean hasDuplicate = results.stream().anyMatch(result -> result.getSimilarity() >= config.getThreshold());
+            RiskLevel riskLevel = riskAssessor.assess(results, config);
+
+            report.setResults(results);
             report.setHasDuplicate(hasDuplicate);
-            report.setSummary(generateSummary(results, hasDuplicate, config));
-            
+            report.setRiskLevel(riskLevel);
+            report.setSummary(generateSummary(results, hasDuplicate, config, riskLevel, candidates.size()));
+
             if (hasDuplicate) {
-                logger.warn("检测到重复文章，文章ID：{}，最高相似度：{}", 
+                logger.warn("检测到重复文章，文章ID：{}，最高相似度：{}",
                         article.getId(), results.get(0).getSimilarity());
             }
-            
+
+            finalizeMetrics(report, performanceMetrics, totalStart);
+            return report;
         } catch (Exception e) {
             logger.error("检测文章时发生异常，文章ID：{}", article.getId(), e);
             report.setHasDuplicate(false);
+            report.setRiskLevel(RiskLevel.LOW);
             report.setSummary("检测过程中发生异常：" + e.getMessage());
+            finalizeMetrics(report, performanceMetrics, totalStart);
+            return report;
         }
-        
-        return report;
     }
 
-    /**
-     * 过滤掉当前文章
-     * 
-     * @param currentArticle 当前文章
-     * @param articles 文章列表
-     * @return 过滤后的文章列表
-     */
+    private CandidateSelection buildCandidateSelection(Article article,
+                                                       List<Article> filteredArticles,
+                                                       DuplicateCheckConfig config) {
+        if (!config.isEnableLayeredDetection()) {
+            return new CandidateSelection(filteredArticles, Map.of(), Map.of(), false,
+                    filteredArticles.size(), filteredArticles.size());
+        }
+        CandidateSelection selection = candidateManager.selectCandidates(article, null, config);
+        if (!selection.getCandidates().isEmpty()) {
+            return selection;
+        }
+        if (!config.isEnableFullScanFallback()) {
+            return selection;
+        }
+        return new CandidateSelection(filteredArticles,
+                selection.getHammingDistances(),
+                selection.getSharedTagCounts(),
+                selection.isCacheHit(),
+                selection.getSimHashCandidateCount(),
+                selection.getTagCandidateCount());
+    }
+
     private List<Article> filterCurrentArticle(Article currentArticle, List<Article> articles) {
-        if (articles == null || articles.isEmpty()) {
+        if (currentArticle == null || articles == null || articles.isEmpty()) {
             return new ArrayList<>();
         }
-        
+
         List<Article> filteredArticles = new ArrayList<>();
         for (Article article : articles) {
-            if (!article.getId().equals(currentArticle.getId())) {
+            if (article != null
+                    && article.getId() != null
+                    && !article.getId().equals(currentArticle.getId())) {
                 filteredArticles.add(article);
             }
         }
-        
         return filteredArticles;
     }
 
-    /**
-     * 并行计算文章相似度
-     * 
-     * @param article 待检测文章
-     * @param existingArticles 已有文章列表
-     * @param config 检测配置
-     * @return 相似度结果列表
-     */
-    private List<SimilarityResult> calculateSimilaritiesParallel(Article article, List<Article> existingArticles, 
-                                                                  DuplicateCheckConfig config) {
-        return existingArticles.parallelStream()
+    private List<SimilarityResult> calculateSimilarities(Article article,
+                                                         List<Article> existingArticles,
+                                                         DuplicateCheckConfig config) {
+        if (existingArticles == null || existingArticles.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<SimilarityResult> results = existingArticles.parallelStream()
                 .map(existingArticle -> calculateSimilarityResult(article, existingArticle, config))
+                .sorted(Comparator.comparingDouble(SimilarityResult::getSimilarity).reversed())
                 .collect(Collectors.toList());
+
+        if (results.size() > config.getMaxResults()) {
+            return new ArrayList<>(results.subList(0, config.getMaxResults()));
+        }
+        return results;
     }
 
-    /**
-     * 计算两篇文章的相似度结果
-     * 
-     * @param article1 文章1
-     * @param article2 文章2
-     * @param config 检测配置
-     * @return 相似度结果
-     */
     private SimilarityResult calculateSimilarityResult(Article article1, Article article2, DuplicateCheckConfig config) {
         double similarity = calculateSimilarity(article1, article2, config);
-        
+
         SimilarityResult result = new SimilarityResult();
         result.setArticleId(article1.getId());
         result.setComparedArticleId(article2.getId());
         result.setSimilarity(similarity);
         result.setAlgorithm(similarityCalculator.getName());
         result.setCheckTime(LocalDateTime.now());
-        
+        result.setDetails(Map.of(
+                "comparedTitle", article2.getTitle() != null ? article2.getTitle() : "",
+                "threshold", config.getThreshold()
+        ));
         return result;
     }
 
-    /**
-     * 计算两篇文章的相似度
-     * 优先使用缓存
-     * 
-     * @param article1 文章1
-     * @param article2 文章2
-     * @param config 检测配置
-     * @return 相似度值
-     */
     private double calculateSimilarity(Article article1, Article article2, DuplicateCheckConfig config) {
         if (cacheService != null && config.isEnableCache()) {
             Double cachedSimilarity = cacheService.getSimilarity(article1.getId(), article2.getId());
-            
             if (cachedSimilarity != null) {
                 return cachedSimilarity;
             }
-            
-            double similarity = similarityCalculator.calculateSimilarity(article1, article2);
-            cacheService.putSimilarity(article1.getId(), article2.getId(), similarity);
-            return similarity;
         }
-        
-        return similarityCalculator.calculateSimilarity(article1, article2);
+
+        double similarity = similarityCalculator.calculateSimilarity(article1, article2);
+        if (cacheService != null && config.isEnableCache()) {
+            cacheService.putSimilarity(article1.getId(), article2.getId(), similarity);
+        }
+        return similarity;
     }
 
-    /**
-     * 生成检测摘要
-     * 
-     * @param results 相似度结果列表
-     * @param hasDuplicate 是否存在重复
-     * @param config 检测配置
-     * @return 检测摘要
-     */
-    private String generateSummary(List<SimilarityResult> results, boolean hasDuplicate, DuplicateCheckConfig config) {
-        if (results.isEmpty()) {
+    private String generateSummary(List<SimilarityResult> results,
+                                   boolean hasDuplicate,
+                                   DuplicateCheckConfig config,
+                                   RiskLevel riskLevel,
+                                   int candidateCount) {
+        if (results == null || results.isEmpty()) {
             return "无相似文章";
         }
-        
+
         double maxSimilarity = results.stream()
                 .mapToDouble(SimilarityResult::getSimilarity)
                 .max()
                 .orElse(0.0);
-        
         long duplicateCount = results.stream()
-                .filter(r -> r.getSimilarity() >= config.getThreshold())
+                .filter(result -> result.getSimilarity() >= config.getThreshold())
                 .count();
-        
+
         if (hasDuplicate) {
-            return String.format("检测到%d篇相似文章，最高相似度：%.2f%%，超过阈值%.2f%%", 
-                    duplicateCount, maxSimilarity * 100, config.getThreshold() * 100);
-        } else {
-            return String.format("检测完成，最高相似度：%.2f%%，未超过阈值%.2f%%", 
-                    maxSimilarity * 100, config.getThreshold() * 100);
+            return String.format("检测到%d篇相似文章，最高相似度：%.2f%%，候选集大小：%d，风险等级：%s",
+                    duplicateCount, maxSimilarity * 100, candidateCount, riskLevel);
         }
+        return String.format("检测完成，最高相似度：%.2f%%，候选集大小：%d，风险等级：%s",
+                maxSimilarity * 100, candidateCount, riskLevel);
     }
 
-    /**
-     * 创建空报告
-     * 
-     * @param article 文章
-     * @return 空检测报告
-     */
     private DuplicateCheckReport createEmptyReport(Article article) {
         DuplicateCheckReport report = new DuplicateCheckReport();
         report.setArticleId(article.getId());
         report.setCheckTime(LocalDateTime.now());
         report.setHasDuplicate(false);
+        report.setRiskLevel(RiskLevel.LOW);
         report.setSummary("无法生成检测报告");
         return report;
     }
 
-    /**
-     * 创建错误报告
-     * 
-     * @param article 文章
-     * @param e 异常
-     * @return 错误检测报告
-     */
     private DuplicateCheckReport createErrorReport(Article article, Exception e) {
         DuplicateCheckReport report = new DuplicateCheckReport();
-        report.setArticleId(article.getId());
+        report.setArticleId(article != null ? article.getId() : null);
         report.setCheckTime(LocalDateTime.now());
         report.setHasDuplicate(false);
+        report.setRiskLevel(RiskLevel.LOW);
         report.setSummary("检测过程中发生异常：" + e.getMessage());
         return report;
     }
 
-    /**
-     * 关闭检测器
-     * 释放线程池资源
-     */
+    private void finalizeMetrics(DuplicateCheckReport report, PerformanceMetrics performanceMetrics, long totalStart) {
+        performanceMetrics.setTotalDurationMillis(System.currentTimeMillis() - totalStart);
+        report.setPerformanceMetrics(performanceMetrics.toMap());
+        if (performanceMonitor != null) {
+            performanceMonitor.record(performanceMetrics);
+        }
+    }
+
     public void shutdown() {
         forkJoinPool.shutdown();
         try {
@@ -493,11 +420,6 @@ public class BatchDetector implements DuplicateDetector {
         logger.info("批量检测器已关闭");
     }
 
-    /**
-     * 获取批量大小
-     * 
-     * @return 批量大小
-     */
     public int getBatchSize() {
         return batchSize;
     }

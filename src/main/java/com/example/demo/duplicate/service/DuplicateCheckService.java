@@ -4,6 +4,7 @@ import com.example.demo.duplicate.algorithm.SimilarityCalculator;
 import com.example.demo.duplicate.algorithm.SimilarityCalculatorFactory;
 import com.example.demo.duplicate.config.DuplicateCheckConfig;
 import com.example.demo.duplicate.detector.DuplicateDetector;
+import com.example.demo.duplicate.detector.impl.RealTimeDetector;
 import com.example.demo.duplicate.model.Article;
 import com.example.demo.duplicate.model.DuplicateCheckReport;
 import com.example.demo.duplicate.model.SimilarityResult;
@@ -47,6 +48,8 @@ public class DuplicateCheckService {
     public DuplicateCheckService() {
         this.config = DuplicateCheckConfig.defaultConfig();
         this.calculator = SimilarityCalculatorFactory.getCalculator(config.getAlgorithmType());
+        this.cacheService = new SimilarityCacheService();
+        this.detector = new RealTimeDetector(this.calculator, this.config, this.cacheService);
         logger.info("DuplicateCheckService 初始化完成，使用默认配置: {}", this.config);
     }
 
@@ -58,6 +61,8 @@ public class DuplicateCheckService {
     public DuplicateCheckService(DuplicateCheckConfig config) {
         this.config = config != null ? config : DuplicateCheckConfig.defaultConfig();
         this.calculator = SimilarityCalculatorFactory.getCalculator(this.config.getAlgorithmType());
+        this.cacheService = new SimilarityCacheService();
+        this.detector = new RealTimeDetector(this.calculator, this.config, this.cacheService);
         logger.info("DuplicateCheckService 初始化完成，配置: {}", this.config);
     }
 

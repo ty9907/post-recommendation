@@ -1,5 +1,7 @@
 package com.example.demo.duplicate.config;
 
+import com.example.demo.duplicate.algorithm.SimilarityCalculatorFactory;
+
 /**
  * 查重检测配置类
  * 用于配置查重检测的各项参数
@@ -11,11 +13,24 @@ public class DuplicateCheckConfig {
     private int maxResults;         // 最大返回结果数
     private boolean enableCache;    // 是否启用缓存
     private double sensitivity;     // 检测敏感度
+    private int simHashHammingThreshold; // SimHash海明距离阈值
+    private int maxCandidateSize;        // 候选集最大大小
+    private double highRiskThreshold;    // 高风险阈值
+    private double mediumRiskThreshold;  // 中风险阈值
+    private int asyncQueueSize;          // 异步检测队列大小
+    private int asyncWorkerCount;        // 异步检测工作线程数
+    private int candidateCacheExpireMinutes; // 候选集缓存过期时间
+    private boolean enableLayeredDetection;  // 是否启用分层检测
+    private boolean enableAsyncDetection;    // 是否启用异步精检
+    private boolean enableFullScanFallback;  // 分层筛选为空时是否回退全量扫描
+    private String preciseAlgorithmType;     // 异步精检算法
+    private String indexPersistencePath;     // 索引持久化路径
 
     /**
      * 默认构造器
      */
     public DuplicateCheckConfig() {
+        applyOptimizationDefaults();
     }
 
     /**
@@ -35,6 +50,57 @@ public class DuplicateCheckConfig {
         this.maxResults = maxResults;
         this.enableCache = enableCache;
         this.sensitivity = sensitivity;
+        applyOptimizationDefaults();
+    }
+
+    /**
+     * 完整配置构造器
+     *
+     * @param threshold 相似度阈值
+     * @param recentDays 检测最近多少天的文章
+     * @param algorithmType 快速检测算法类型
+     * @param maxResults 最大返回结果数
+     * @param enableCache 是否启用缓存
+     * @param sensitivity 检测敏感度
+     * @param simHashHammingThreshold SimHash海明距离阈值
+     * @param maxCandidateSize 候选集最大大小
+     * @param highRiskThreshold 高风险阈值
+     * @param mediumRiskThreshold 中风险阈值
+     * @param asyncQueueSize 异步检测队列大小
+     * @param asyncWorkerCount 异步检测工作线程数
+     * @param candidateCacheExpireMinutes 候选集缓存过期时间（分钟）
+     * @param enableLayeredDetection 是否启用分层检测
+     * @param enableAsyncDetection 是否启用异步精检
+     * @param enableFullScanFallback 分层筛选为空时是否回退全量扫描
+     * @param preciseAlgorithmType 异步精检算法
+     * @param indexPersistencePath 索引持久化路径
+     */
+    public DuplicateCheckConfig(double threshold, int recentDays, String algorithmType,
+                                int maxResults, boolean enableCache, double sensitivity,
+                                int simHashHammingThreshold, int maxCandidateSize,
+                                double highRiskThreshold, double mediumRiskThreshold,
+                                int asyncQueueSize, int asyncWorkerCount,
+                                int candidateCacheExpireMinutes, boolean enableLayeredDetection,
+                                boolean enableAsyncDetection, boolean enableFullScanFallback,
+                                String preciseAlgorithmType, String indexPersistencePath) {
+        this.threshold = threshold;
+        this.recentDays = recentDays;
+        this.algorithmType = algorithmType;
+        this.maxResults = maxResults;
+        this.enableCache = enableCache;
+        this.sensitivity = sensitivity;
+        this.simHashHammingThreshold = simHashHammingThreshold;
+        this.maxCandidateSize = maxCandidateSize;
+        this.highRiskThreshold = highRiskThreshold;
+        this.mediumRiskThreshold = mediumRiskThreshold;
+        this.asyncQueueSize = asyncQueueSize;
+        this.asyncWorkerCount = asyncWorkerCount;
+        this.candidateCacheExpireMinutes = candidateCacheExpireMinutes;
+        this.enableLayeredDetection = enableLayeredDetection;
+        this.enableAsyncDetection = enableAsyncDetection;
+        this.enableFullScanFallback = enableFullScanFallback;
+        this.preciseAlgorithmType = preciseAlgorithmType;
+        this.indexPersistencePath = indexPersistencePath;
     }
 
     /**
@@ -60,11 +126,26 @@ public class DuplicateCheckConfig {
         return new DuplicateCheckConfig(
             0.5,        // 严格阈值50%
             90,         // 检测最近90天
-            "COMBINED", // 使用组合算法
+            "HYBRID",   // 使用混合算法
             20,         // 最多返回20个结果
             true,       // 启用缓存
             0.8         // 高敏感度
         );
+    }
+
+    private void applyOptimizationDefaults() {
+        this.simHashHammingThreshold = 3;
+        this.maxCandidateSize = 50;
+        this.highRiskThreshold = 0.7;
+        this.mediumRiskThreshold = 0.4;
+        this.asyncQueueSize = 256;
+        this.asyncWorkerCount = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
+        this.candidateCacheExpireMinutes = 15;
+        this.enableLayeredDetection = true;
+        this.enableAsyncDetection = true;
+        this.enableFullScanFallback = true;
+        this.preciseAlgorithmType = SimilarityCalculatorFactory.HYBRID;
+        this.indexPersistencePath = null;
     }
 
     /**
@@ -163,6 +244,102 @@ public class DuplicateCheckConfig {
         this.sensitivity = sensitivity;
     }
 
+    public int getSimHashHammingThreshold() {
+        return simHashHammingThreshold;
+    }
+
+    public void setSimHashHammingThreshold(int simHashHammingThreshold) {
+        this.simHashHammingThreshold = simHashHammingThreshold;
+    }
+
+    public int getMaxCandidateSize() {
+        return maxCandidateSize;
+    }
+
+    public void setMaxCandidateSize(int maxCandidateSize) {
+        this.maxCandidateSize = maxCandidateSize;
+    }
+
+    public double getHighRiskThreshold() {
+        return highRiskThreshold;
+    }
+
+    public void setHighRiskThreshold(double highRiskThreshold) {
+        this.highRiskThreshold = highRiskThreshold;
+    }
+
+    public double getMediumRiskThreshold() {
+        return mediumRiskThreshold;
+    }
+
+    public void setMediumRiskThreshold(double mediumRiskThreshold) {
+        this.mediumRiskThreshold = mediumRiskThreshold;
+    }
+
+    public int getAsyncQueueSize() {
+        return asyncQueueSize;
+    }
+
+    public void setAsyncQueueSize(int asyncQueueSize) {
+        this.asyncQueueSize = asyncQueueSize;
+    }
+
+    public int getAsyncWorkerCount() {
+        return asyncWorkerCount;
+    }
+
+    public void setAsyncWorkerCount(int asyncWorkerCount) {
+        this.asyncWorkerCount = asyncWorkerCount;
+    }
+
+    public int getCandidateCacheExpireMinutes() {
+        return candidateCacheExpireMinutes;
+    }
+
+    public void setCandidateCacheExpireMinutes(int candidateCacheExpireMinutes) {
+        this.candidateCacheExpireMinutes = candidateCacheExpireMinutes;
+    }
+
+    public boolean isEnableLayeredDetection() {
+        return enableLayeredDetection;
+    }
+
+    public void setEnableLayeredDetection(boolean enableLayeredDetection) {
+        this.enableLayeredDetection = enableLayeredDetection;
+    }
+
+    public boolean isEnableAsyncDetection() {
+        return enableAsyncDetection;
+    }
+
+    public void setEnableAsyncDetection(boolean enableAsyncDetection) {
+        this.enableAsyncDetection = enableAsyncDetection;
+    }
+
+    public boolean isEnableFullScanFallback() {
+        return enableFullScanFallback;
+    }
+
+    public void setEnableFullScanFallback(boolean enableFullScanFallback) {
+        this.enableFullScanFallback = enableFullScanFallback;
+    }
+
+    public String getPreciseAlgorithmType() {
+        return preciseAlgorithmType;
+    }
+
+    public void setPreciseAlgorithmType(String preciseAlgorithmType) {
+        this.preciseAlgorithmType = preciseAlgorithmType;
+    }
+
+    public String getIndexPersistencePath() {
+        return indexPersistencePath;
+    }
+
+    public void setIndexPersistencePath(String indexPersistencePath) {
+        this.indexPersistencePath = indexPersistencePath;
+    }
+
     @Override
     public String toString() {
         return "DuplicateCheckConfig{" +
@@ -172,6 +349,18 @@ public class DuplicateCheckConfig {
                 ", maxResults=" + maxResults +
                 ", enableCache=" + enableCache +
                 ", sensitivity=" + sensitivity +
+                ", simHashHammingThreshold=" + simHashHammingThreshold +
+                ", maxCandidateSize=" + maxCandidateSize +
+                ", highRiskThreshold=" + highRiskThreshold +
+                ", mediumRiskThreshold=" + mediumRiskThreshold +
+                ", asyncQueueSize=" + asyncQueueSize +
+                ", asyncWorkerCount=" + asyncWorkerCount +
+                ", candidateCacheExpireMinutes=" + candidateCacheExpireMinutes +
+                ", enableLayeredDetection=" + enableLayeredDetection +
+                ", enableAsyncDetection=" + enableAsyncDetection +
+                ", enableFullScanFallback=" + enableFullScanFallback +
+                ", preciseAlgorithmType='" + preciseAlgorithmType + '\'' +
+                ", indexPersistencePath='" + indexPersistencePath + '\'' +
                 '}';
     }
 }

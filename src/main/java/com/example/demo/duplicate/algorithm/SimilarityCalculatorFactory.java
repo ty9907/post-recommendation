@@ -2,6 +2,7 @@ package com.example.demo.duplicate.algorithm;
 
 import com.example.demo.duplicate.algorithm.impl.CosineSimilarityCalculator;
 import com.example.demo.duplicate.algorithm.impl.EditDistanceSimilarityCalculator;
+import com.example.demo.duplicate.algorithm.impl.HybridSimilarityCalculator;
 import com.example.demo.duplicate.algorithm.impl.SimHashSimilarityCalculator;
 import com.example.demo.duplicate.algorithm.impl.TFIDFSimilarityCalculator;
 import com.example.demo.duplicate.algorithm.impl.Word2VecSimilarityCalculator;
@@ -46,6 +47,10 @@ public final class SimilarityCalculatorFactory {
 
     public static final String WORD2VEC = "WORD2VEC";
 
+    public static final String HYBRID = "HYBRID";
+
+    public static final String COMBINED = "COMBINED";
+
     private static final String DEFAULT_ALGORITHM = TFIDF;
 
     private static final TFIDFSimilarityCalculator TFIDF_INSTANCE = new TFIDFSimilarityCalculator();
@@ -55,6 +60,8 @@ public final class SimilarityCalculatorFactory {
     private static final EditDistanceSimilarityCalculator EDIT_DISTANCE_INSTANCE = new EditDistanceSimilarityCalculator();
 
     private static final SimHashSimilarityCalculator SIMHASH_INSTANCE = new SimHashSimilarityCalculator();
+
+    private static final HybridSimilarityCalculator HYBRID_INSTANCE = new HybridSimilarityCalculator();
 
     private static Word2VecSimilarityCalculator WORD2VEC_INSTANCE;
 
@@ -91,12 +98,15 @@ public final class SimilarityCalculatorFactory {
                 return EDIT_DISTANCE_INSTANCE;
             case SIMHASH:
                 return SIMHASH_INSTANCE;
+            case HYBRID:
+            case COMBINED:
+                return HYBRID_INSTANCE;
             case WORD2VEC:
                 return getWord2VecInstance();
             default:
                 throw new IllegalArgumentException(
                         "不支持的算法类型: " + algorithmType + 
-                        "。支持的类型: TFIDF, COSINE, EDIT_DISTANCE, SIMHASH, WORD2VEC"
+                        "。支持的类型: TFIDF, COSINE, EDIT_DISTANCE, SIMHASH, HYBRID, COMBINED, WORD2VEC"
                 );
         }
     }
@@ -154,6 +164,8 @@ public final class SimilarityCalculatorFactory {
             case COSINE:
             case EDIT_DISTANCE:
             case SIMHASH:
+            case HYBRID:
+            case COMBINED:
             case WORD2VEC:
                 return true;
             default:
@@ -176,7 +188,7 @@ public final class SimilarityCalculatorFactory {
      * @return 算法类型数组
      */
     public static String[] getSupportedAlgorithms() {
-        return new String[]{TFIDF, COSINE, EDIT_DISTANCE, SIMHASH, WORD2VEC};
+        return new String[]{TFIDF, COSINE, EDIT_DISTANCE, SIMHASH, HYBRID, COMBINED, WORD2VEC};
     }
 
     /**
@@ -199,6 +211,9 @@ public final class SimilarityCalculatorFactory {
                 return "编辑距离相似度：基于Levenshtein距离的相似度计算，适合检测抄袭和改写";
             case SIMHASH:
                 return "SimHash相似度：基于SimHash指纹的相似度计算，适合大规模文档快速去重";
+            case HYBRID:
+            case COMBINED:
+                return "混合相似度：融合标签与文本相似度，适合作为精确检测阶段的综合算法";
             case WORD2VEC:
                 return "Word2Vec相似度：基于词向量的语义相似度计算，能够理解同义词和语义关系";
             default:

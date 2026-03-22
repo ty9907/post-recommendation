@@ -1,162 +1,145 @@
-# 文章标签提取系统
+# 内容处理与推荐能力库
 
 ## 项目简介
 
-本项目是一个基于Java的文章标签提取系统，主要功能是为文章提取关键标签，为后续其他模块的文章推荐做准备。系统使用Maven管理依赖，JDK 21作为开发环境。
+本项目是一个基于 Java 21 的内容处理能力库，围绕“标签提取、帖子推荐、重复内容检测”三条主线提供可复用的 SDK 与基础组件。
 
-## 项目功能
+当前仓库已经不再只是单一的标签提取示例，而是一个可直接嵌入业务系统的内容处理中台原型，包含：
 
-- 文章关键标签提取
-- 标签权重计算
-- 标签存储与管理
-- 为推荐系统提供标签数据支持
-- 支持多种分词算法（简单分词、IKAnalyzer、HanLP）
-- 灵活的接口设计，易于扩展新的分词实现
-- 完善的单元测试覆盖，使用SLF4J日志框架
-- 支持日志输出提取的标签详情，便于调试和验证
+- 标签提取模块：从文章内容中提取关键词标签，支持 `Simple`、`IKAnalyzer`、`HanLP`
+- 帖子推荐 SDK：基于用户标签、帖子标签、浏览历史进行多维度加权推荐
+- 重复内容检测模块：支持实时/批量查重、缓存、白名单、人工审核、分层过滤和性能监控
 
-## 技术栈
+## 核心能力
 
-- **语言**: Java 21
-- **构建工具**: Maven 3.8.1+
-- **测试框架**: JUnit 4.13.2
-- **日志框架**: SLF4J 1.7.36
-- **分词库**: IKAnalyzer 2012_u6, HanLP portable-1.8.4
+### 1. 标签提取
+
+- 支持多种分词与标签提取实现
+- 支持停用词过滤、词性过滤、频率过滤
+- 提供标签质量评估工具
+
+主要入口：
+
+- `com.example.demo.tag.service.TagService`
+
+### 2. 帖子推荐 SDK
+
+- 支持标签匹配维度
+- 支持浏览历史维度
+- 支持维度权重动态调整
+- 支持批量推荐、分页和性能测试
+
+主要入口：
+
+- `com.example.demo.recommendation.PostRecommendationSDK`
+
+推荐文档：
+
+- `docs/recommendation/README.md`
+- `docs/recommendation/api-reference.md`
+- `docs/recommendation/data-models.md`
+- `docs/recommendation/error-codes.md`
+- `docs/recommendation/examples.md`
+
+### 3. 重复内容检测
+
+- 支持 `TFIDF`、`COSINE`、`EDIT_DISTANCE`、`SIMHASH`、`HYBRID`、`WORD2VEC`
+- 支持实时检测器 `RealTimeDetector`
+- 支持批量检测器 `BatchDetector`
+- 支持缓存、白名单、人工审核
+- 支持富文本预处理、SimHash 倒排索引、标签倒排索引、候选集缓存
+- 支持风险分级、异步精检、性能指标采集、索引同步
+
+主要入口：
+
+- `com.example.demo.duplicate.service.DuplicateCheckService`
+
+相关文档：
+
+- `docs/duplicate-article-check-design.md`
+
+## 新增的性能优化能力
+
+重复检测模块已经补齐了之前规划但未落地的性能优化链路：
+
+- 富文本预处理接口与实现
+- SimHash 分段倒排索引
+- 标签倒排索引
+- 候选集管理器与候选缓存
+- 风险等级评估
+- 异步精检任务队列
+- 性能监控与性能报告
+- 索引同步服务
+
+对应新增包：
+
+- `com.example.demo.duplicate.preprocess`
+- `com.example.demo.duplicate.index`
+- `com.example.demo.duplicate.candidate`
+- `com.example.demo.duplicate.async`
+- `com.example.demo.duplicate.monitor`
+- `com.example.demo.duplicate.sync`
+- `com.example.demo.duplicate.risk`
 
 ## 项目结构
 
-```
+```text
 post-recommendation/
 ├── src/
-│   ├── main/
-│   │   ├── java/         # 主源代码
-│   │   │   └── com/
-│   │   │       └── example/
-│   │   │           └── demo/
-│   │   │               ├── tag/          # 标签提取模块
-│   │   │               │   ├── TagExtractor.java        # 标签提取接口
-│   │   │               │   ├── impl/                 # 分词实现
-│   │   │               │   │   ├── SimpleTagExtractor.java
-│   │   │               │   │   ├── IKAnalyzerTagExtractor.java
-│   │   │               │   │   └── HanLPTagExtractor.java
-│   │   │               │   ├── model/                # 数据模型
-│   │   │               │   │   └── Tag.java
-│   │   │               │   └── service/              # 服务层
-│   │   │               │       └── TagService.java
-│   │   │               └── Main.java
-│   │   └── resources/    # 资源文件
-│   └── test/
-│       ├── java/         # 测试代码
-│       │   └── com/
-│       │       └── example/
-│       │           └── demo/
-│       │               ├── tag/                  # 标签提取测试模块
-│       │               │   ├── service/
-│       │               │   │   └── TagServiceTest.java
-│       │               │   └── impl/
-│       │               │       ├── SimpleTagExtractorTest.java
-│       │               │       ├── IKAnalyzerTagExtractorTest.java
-│       │               │       └── HanLPTagExtractorTest.java
-│       │               └── TestTagExtractor.java
-│       └── resources/    # 测试资源文件
-├── pom.xml               # Maven配置文件
-├── README.md             # 项目说明文档
-└── .gitignore            # Git忽略文件配置
+│   ├── main/java/com/example/demo/
+│   │   ├── tag/              # 标签提取模块
+│   │   ├── recommendation/   # 推荐 SDK 模块
+│   │   └── duplicate/        # 重复内容检测模块
+│   └── test/                 # 单元测试、集成测试、性能测试
+├── docs/                     # 设计和使用文档
+├── pom.xml
+└── README.md
 ```
 
-## 快速开始
+## 构建与测试
 
-### 环境要求
+环境要求：
 
 - JDK 21+
 - Maven 3.8.1+
 
-### 构建项目
+常用命令：
 
 ```bash
-# 编译项目
 mvn compile
-
-# 运行测试
 mvn test
-
-# 打包项目
 mvn package
 ```
 
-### 运行项目
+本次整理后，完整测试套件已通过：
 
-```bash
-# 运行主类
-java -cp target/demo-1.0-SNAPSHOT.jar com.example.demo.Main
-```
+- 363 个测试全部通过
 
-## 核心功能模块
+## 接入说明
 
-1. **标签提取接口层**: 定义统一的标签提取接口，支持灵活扩展
-2. **分词实现层**: 
-   - SimpleTagExtractor: 基于正则表达式的简单分词
-   - IKAnalyzerTagExtractor: 使用IKAnalyzer分词器，适合中文分词
-   - HanLPTagExtractor: 使用HanLP分词器，功能更强大的中文分词
-3. **数据模型层**: Tag模型，包含标签名称、权重和频率属性
-4. **服务层**: TagService，整合不同的分词器，提供统一的标签提取服务
-5. **测试模块**: 完善的单元测试，覆盖所有核心功能，使用日志输出测试结果
+### 作为 SDK/组件接入
 
-## 使用示例
+当前仓库的定位是“可嵌入业务系统的能力库”，而不是完整的 Web 应用。  
+如果你要接入真实业务系统，推荐通过以下方式使用：
 
-```java
-// 使用默认的HanLP分词器
-TagService tagService = new TagService();
-List<Tag> tags = tagService.extractTags(article, 10);
+- 标签提取：直接调用 `TagService`
+- 推荐：初始化 `PostRecommendationSDK`
+- 查重：通过 `DuplicateCheckService` 或直接使用检测器
+- 文章数据接入：实现 `com.example.demo.duplicate.service.ArticleRepository`
 
-// 指定使用IKAnalyzer分词器
-TagService ikService = new TagService("ik");
-List<Tag> ikTags = ikService.extractTags(article, 10);
+### 已实现但仍需业务方决定的部分
 
-// 指定使用简单分词器
-TagService simpleService = new TagService("simple");
-List<Tag> simpleTags = simpleService.extractTags(article, 10);
+- 是否在发布流程中直接阻断高风险内容
+- 是否将中风险内容接入人工审核系统
+- 索引持久化路径与生命周期策略
+- Web API / Spring Boot 外层封装
 
-// 输出标签信息
-for (Tag tag : tags) {
-    System.out.println(tag.getName() + " (权重: " + tag.getWeight() + ", 频率: " + tag.getFrequency() + ")");
-}
-```
+## 重要说明
 
-## 测试
-
-项目包含完善的单元测试，覆盖所有核心功能：
-
-```bash
-# 运行所有测试
-mvn test
-
-# 测试输出会显示提取的标签详情，包括：
-# - 标签名称
-# - 权重值（格式化为4位小数）
-# - 出现频率
-```
-
-测试模块包括：
-- **TagServiceTest**: 测试服务层功能
-- **SimpleTagExtractorTest**: 测试简单分词器
-- **IKAnalyzerTagExtractorTest**: 测试IKAnalyzer分词器
-- **HanLPTagExtractorTest**: 测试HanLP分词器（包括中文分词测试）
-
-所有测试使用SLF4J日志框架输出详细的标签提取结果，便于调试和验证。
-
-## 后续规划
-
-- 集成自然语言处理库，提高标签提取准确性
-- 实现标签同义词合并功能
-- 添加标签热度分析
-- 开发Web API接口
-- 集成到完整的推荐系统中
-
-## 贡献指南
-
-欢迎提交Issue和Pull Request来改进本项目。
+- 顶层 README 已与当前代码结构同步，不再把项目描述为“仅标签提取系统”
+- 推荐 SDK 与重复检测模块都已具备独立使用能力
+- 重复检测的性能优化主线已完成实现，并补充了索引、候选集、异步、风险分级和监控相关测试
 
 ## 许可证
 
-本项目采用MIT许可证。
+本项目采用 MIT 许可证。

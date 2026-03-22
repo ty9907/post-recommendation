@@ -74,7 +74,11 @@ public class SimilarityCacheService {
     public SimilarityCacheService() {
         this.similarityCache = new ConcurrentHashMap<>();
         this.articleCache = new ConcurrentHashMap<>();
-        this.scheduler = Executors.newSingleThreadScheduledExecutor();
+        this.scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "similarity-cache-cleaner");
+            thread.setDaemon(true);
+            return thread;
+        });
         
         // 启动定时清理任务，每10分钟执行一次
         scheduler.scheduleAtFixedRate(this::cleanExpiredEntries, 10, 10, TimeUnit.MINUTES);

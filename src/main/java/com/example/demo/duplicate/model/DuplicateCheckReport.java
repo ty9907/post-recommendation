@@ -1,8 +1,12 @@
 package com.example.demo.duplicate.model;
 
+import com.example.demo.duplicate.risk.RiskLevel;
+
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 查重检测报告类
@@ -14,12 +18,18 @@ public class DuplicateCheckReport {
     private boolean hasDuplicate;            // 是否存在重复
     private LocalDateTime checkTime;         // 检测时间
     private String summary;                  // 检测摘要
+    private RiskLevel riskLevel;             // 风险等级
+    private Map<String, Object> layerDetails;        // 分层筛选详情
+    private Map<String, Object> performanceMetrics;  // 性能指标
+    private boolean asyncSubmitted;          // 是否已提交异步精检
 
     /**
      * 默认构造器
      */
     public DuplicateCheckReport() {
         this.results = new ArrayList<>();
+        this.layerDetails = new HashMap<>();
+        this.performanceMetrics = new HashMap<>();
     }
 
     /**
@@ -37,6 +47,8 @@ public class DuplicateCheckReport {
         this.hasDuplicate = hasDuplicate;
         this.checkTime = checkTime;
         this.summary = summary;
+        this.layerDetails = new HashMap<>();
+        this.performanceMetrics = new HashMap<>();
     }
 
     /**
@@ -130,6 +142,38 @@ public class DuplicateCheckReport {
         this.summary = summary;
     }
 
+    public RiskLevel getRiskLevel() {
+        return riskLevel;
+    }
+
+    public void setRiskLevel(RiskLevel riskLevel) {
+        this.riskLevel = riskLevel;
+    }
+
+    public Map<String, Object> getLayerDetails() {
+        return layerDetails;
+    }
+
+    public void setLayerDetails(Map<String, Object> layerDetails) {
+        this.layerDetails = layerDetails != null ? layerDetails : new HashMap<>();
+    }
+
+    public Map<String, Object> getPerformanceMetrics() {
+        return performanceMetrics;
+    }
+
+    public void setPerformanceMetrics(Map<String, Object> performanceMetrics) {
+        this.performanceMetrics = performanceMetrics != null ? performanceMetrics : new HashMap<>();
+    }
+
+    public boolean isAsyncSubmitted() {
+        return asyncSubmitted;
+    }
+
+    public void setAsyncSubmitted(boolean asyncSubmitted) {
+        this.asyncSubmitted = asyncSubmitted;
+    }
+
     @Override
     public String toString() {
         return "DuplicateCheckReport{" +
@@ -138,6 +182,10 @@ public class DuplicateCheckReport {
                 ", hasDuplicate=" + hasDuplicate +
                 ", checkTime=" + checkTime +
                 ", summary='" + summary + '\'' +
+                ", riskLevel=" + riskLevel +
+                ", layerDetails=" + layerDetails +
+                ", performanceMetrics=" + performanceMetrics +
+                ", asyncSubmitted=" + asyncSubmitted +
                 '}';
     }
 }

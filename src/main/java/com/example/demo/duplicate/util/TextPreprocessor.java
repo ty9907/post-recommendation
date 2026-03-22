@@ -1,5 +1,8 @@
 package com.example.demo.duplicate.util;
 
+import com.example.demo.duplicate.preprocess.DefaultRichTextPreprocessor;
+import com.example.demo.duplicate.preprocess.PreprocessedTextCache;
+import com.example.demo.duplicate.preprocess.RichTextPreprocessor;
 import com.hankcs.hanlp.HanLP;
 import com.hankcs.hanlp.seg.common.Term;
 
@@ -8,7 +11,6 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * 文本预处理工具类
@@ -42,16 +44,6 @@ import java.util.regex.Pattern;
  */
 public class TextPreprocessor {
 
-    private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
-    
-    private static final Pattern HTML_ENTITY_PATTERN = Pattern.compile("&[a-zA-Z]+;|&#\\d+;");
-    
-    private static final Pattern SPECIAL_CHARS_PATTERN = Pattern.compile("[\\s\\p{Punct}&&[^\\u4e00-\\u9fa5a-zA-Z0-9]]+");
-    
-    private static final Pattern WHITESPACE_PATTERN = Pattern.compile("\\s+");
-    
-    private static final Pattern CONTROL_CHARS_PATTERN = Pattern.compile("[\\x00-\\x1F\\x7F]");
-
     private static final Set<String> STOP_WORDS = new HashSet<>(Arrays.asList(
         "的", "了", "是", "在", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
         "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好",
@@ -73,7 +65,12 @@ public class TextPreprocessor {
         "陆", "柒", "捌", "玖", "拾", "佰", "仟"
     ));
 
+    private final RichTextPreprocessor richTextPreprocessor;
+    private final PreprocessedTextCache preprocessedTextCache;
+
     public TextPreprocessor() {
+        this.richTextPreprocessor = new DefaultRichTextPreprocessor();
+        this.preprocessedTextCache = new PreprocessedTextCache();
     }
 
     /**
@@ -93,14 +90,8 @@ public class TextPreprocessor {
         if (text == null || text.isEmpty()) {
             return "";
         }
-        
-        String result = removeHtmlTags(text);
-        result = removeHtmlEntities(result);
-        result = removeControlChars(result);
-        result = removeSpecialChars(result);
-        result = normalizeWhitespace(result);
-        
-        return result.trim();
+
+        return preprocessedTextCache.getOrCompute(text, () -> richTextPreprocessor.preprocess(text));
     }
 
     /**
@@ -113,11 +104,7 @@ public class TextPreprocessor {
      * @return 去除HTML标签后的文本
      */
     public String removeHtmlTags(String text) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        
-        return HTML_TAG_PATTERN.matcher(text).replaceAll("");
+        return richTextPreprocessor.stripTags(text);
     }
 
     /**
@@ -129,12 +116,7 @@ public class TextPreprocessor {
      * @return 去除HTML实体后的文本
      */
     public String removeHtmlEntities(String text) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        
-        String result = HTML_ENTITY_PATTERN.matcher(text).replaceAll("");
-        return result.replace("\u00A0", " ");
+        return richTextPreprocessor.decodeEntities(text);
     }
 
     /**
@@ -147,11 +129,7 @@ public class TextPreprocessor {
      * @return 去除特殊字符后的文本
      */
     public String removeSpecialChars(String text) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        
-        return SPECIAL_CHARS_PATTERN.matcher(text).replaceAll(" ");
+        return richTextPreprocessor.normalize(text);
     }
 
     /**
@@ -163,11 +141,7 @@ public class TextPreprocessor {
      * @return 去除控制字符后的文本
      */
     public String removeControlChars(String text) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        
-        return CONTROL_CHARS_PATTERN.matcher(text).replaceAll("");
+        return richTextPreprocessor.normalize(text);
     }
 
     /**
@@ -179,11 +153,7 @@ public class TextPreprocessor {
      * @return 规范化后的文本
      */
     public String normalizeWhitespace(String text) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        
-        return WHITESPACE_PATTERN.matcher(text).replaceAll(" ").trim();
+        return richTextPreprocessor.normalize(text);
     }
 
     /**
